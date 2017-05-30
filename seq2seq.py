@@ -11,115 +11,56 @@ import six
 
 import chainer
 from chainer import cuda
-import chainer.functions as F
-import chainer.links as L
+from chainer.dataset import convert
 from chainer import reporter
 from chainer import training
 from chainer.training import extensions
 
 import europal
+import net
 
 
-def sequence_embed(embed, xs):
-    x_len = [len(x) for x in xs]
-    x_section = numpy.cumsum(x_len[:-1])
-    ex = embed(F.concat(xs, axis=0))
-    exs = F.split_axis(ex, x_section, 0, force_tuple=True)
-    return exs
+def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
+    """
+    Args:
+        xy_batch (list of tuple of two numpy.ndarray-s or cupy.ndarray-s):
+            xy_batch[i][0] is an array
+            of token ids of i-th input sentence in a minibatch.
+            xy_batch[i][1] is an array
+            of token ids of i-th target sentence in a minibatch.
+            The shape of each array is `(sentence length, )`.
+        device (int or None): Device ID to which an array is sent. If it is
+            negative value, an array is sent to CPU. If it is positive, an
+            array is sent to GPU with the given ID. If it is ``None``, an
+            array is left in the original device.
 
+    Returns:
+        Tuple of Converted array.
+            (input_sent_batch_array, target_sent_batch_array).
+            The shape of each array is `(batchsize, max_sentence_length)`.
+            All sentences are padded with -1 to reach max_sentence_length.
+    """
 
-class Seq2seq(chainer.Chain):
+    x_seqs, y_seqs = zip(*xy_batch)
 
-    def __init__(self, n_layers, n_source_vocab, n_target_vocab, n_units):
-        super(Seq2seq, self).__init__(
-            embed_x=L.EmbedID(n_source_vocab, n_units),
-            embed_y=L.EmbedID(n_target_vocab, n_units),
-            encoder=L.NStepLSTM(n_layers, n_units, n_units, 0.1),
-            decoder=L.NStepLSTM(n_layers, n_units, n_units, 0.1),
-            W=L.Linear(n_units, n_target_vocab),
-        )
-        self.n_layers = n_layers
-        self.n_units = n_units
+    x_block = convert.concat_examples(x_seqs, device, padding=-1)
+    y_block = convert.concat_examples(y_seqs, device, padding=-1)
+    xp = cuda.get_array_module(x_block)
 
-    def __call__(self, *inputs):
-        xs = inputs[:len(inputs) // 2]
-        ys = inputs[len(inputs) // 2:]
+    # add eos
+    x_block = xp.pad(x_block, ((0, 0), (0, 1)),
+                     'constant', constant_values=-1)
+    for i_batch, seq in enumerate(x_seqs):
+        x_block[i_batch, len(seq)] = eos_id
 
-        xs = [x[::-1] for x in xs]
+    y_out_block = xp.pad(y_block, ((0, 0), (0, 1)),
+                         'constant', constant_values=-1)
+    for i_batch, seq in enumerate(y_seqs):
+        y_out_block[i_batch, len(seq)] = eos_id
 
-        eos = self.xp.zeros(1, 'i')
-        ys_in = [F.concat([eos, y], axis=0) for y in ys]
-        ys_out = [F.concat([y, eos], axis=0) for y in ys]
-
-        # Both xs and ys_in are lists of arrays.
-        exs = sequence_embed(self.embed_x, xs)
-        eys = sequence_embed(self.embed_y, ys_in)
-
-        batch = len(xs)
-        # None represents a zero vector in an encoder.
-        hx, cx, _ = self.encoder(None, None, exs)
-        _, _, os = self.decoder(hx, cx, eys)
-
-        # It is faster to concatenate data before calculating loss
-        # because only one matrix multiplication is called.
-        concat_os = F.concat(os, axis=0)
-        concat_ys_out = F.concat(ys_out, axis=0)
-        loss = F.sum(F.softmax_cross_entropy(
-            self.W(concat_os), concat_ys_out, reduce='no')) / batch
-
-        reporter.report({'loss': loss.data}, self)
-        n_words = concat_ys_out.shape[0]
-        perp = self.xp.exp(loss.data * batch / n_words)
-        reporter.report({'perp': perp}, self)
-        return loss
-
-    def translate(self, xs, max_length=100):
-        batch = len(xs)
-        with chainer.no_backprop_mode():
-            xs = [x[::-1] for x in xs]
-            exs = sequence_embed(self.embed_x, xs)
-            h, c, _ = self.encoder(None, None, exs, train=False)
-            ys = self.xp.zeros(batch, 'i')
-            result = []
-            for i in range(max_length):
-                eys = self.embed_y(ys)
-                eys = chainer.functions.split_axis(
-                    eys, batch, 0, force_tuple=True)
-                h, c, ys = self.decoder(h, c, eys, train=False)
-                cys = chainer.functions.concat(ys, axis=0)
-                wy = self.W(cys)
-                ys = self.xp.argmax(wy.data, axis=1).astype('i')
-                result.append(ys)
-
-        result = cuda.to_cpu(self.xp.stack(result).T)
-
-        # Remove EOS taggs
-        outs = []
-        for y in result:
-            inds = numpy.argwhere(y == 0)
-            if len(inds) > 0:
-                y = y[:inds[0, 0]]
-            outs.append(y)
-        return outs
-
-
-def convert(batch, device):
-    def to_device_batch(batch):
-        if device is None:
-            return batch
-        elif device < 0:
-            return [chainer.dataset.to_device(device, x) for x in batch]
-        else:
-            xp = cuda.cupy.get_array_module(*batch)
-            concat = xp.concatenate(batch, axis=0)
-            sections = numpy.cumsum([len(x) for x in batch[:-1]], dtype='i')
-            concat_dev = chainer.dataset.to_device(device, concat)
-            batch_dev = cuda.cupy.split(concat_dev, sections)
-            return batch_dev
-
-    return tuple(
-        to_device_batch([x for x, _ in batch]) +
-        to_device_batch([y for _, y in batch]))
+    y_in_block = xp.pad(y_block, ((0, 0), (1, 0)),
+                        'constant', constant_values=eos_id)
+    return (x_block, y_in_block, y_out_block)
 
 
 class CalculateBleu(chainer.training.Extension):
@@ -128,7 +69,7 @@ class CalculateBleu(chainer.training.Extension):
     priority = chainer.training.PRIORITY_WRITER
 
     def __init__(
-            self, model, test_data, key, batch=100, device=-1, max_length=100):
+            self, model, test_data, key, batch=50, device=-1, max_length=50):
         self.model = model
         self.test_data = test_data
         self.key = key
@@ -137,6 +78,7 @@ class CalculateBleu(chainer.training.Extension):
         self.max_length = max_length
 
     def __call__(self, trainer):
+        print('## Calculate BLEU')
         with chainer.no_backprop_mode():
             references = []
             hypotheses = []
@@ -166,7 +108,7 @@ def main():
                         help='GPU ID (negative value indicates CPU)')
     parser.add_argument('--resume', '-r', default='',
                         help='Resume the training from snapshot')
-    parser.add_argument('--unit', '-u', type=int, default=1024,
+    parser.add_argument('--unit', '-u', type=int, default=512,
                         help='Number of units')
     parser.add_argument('--input', '-i', type=str, default='wmt',
                         help='Input directory')
@@ -218,17 +160,20 @@ def main():
     target_words = {i: w for w, i in target_ids.items()}
     source_words = {i: w for w, i in source_ids.items()}
 
-    model = Seq2seq(3, len(source_ids), len(target_ids), args.unit)
+    model = net.Seq2seq(10, len(source_ids), len(target_ids), args.unit)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
 
-    optimizer = chainer.optimizers.Adam()
+    optimizer = chainer.optimizers.NesterovAG(lr=0.01, momentum=0.99)
     optimizer.setup(model)
+    optimizer.add_hook(chainer.optimizer.GradientClipping(0.25))
 
     train_iter = chainer.iterators.SerialIterator(train_data, args.batchsize)
     updater = training.StandardUpdater(
-        train_iter, optimizer, converter=convert, device=args.gpu)
+        train_iter, optimizer,
+        converter=seq2seq_pad_concat_convert, device=args.gpu)
+
     trainer = training.Trainer(updater, (args.epoch, 'epoch'))
     trainer.extend(extensions.LogReport(trigger=(200, 'iteration')),
                    trigger=(200, 'iteration'))
@@ -237,6 +182,11 @@ def main():
          'main/perp', 'validation/main/perp', 'validation/main/bleu',
          'elapsed_time']),
         trigger=(200, 'iteration'))
+    # TODO: realize "We use a learning rate of 0.25 and once the validation
+    # perplexity stops improving, we reduce the learning rate by an order of
+    # magnitude after each epoch until it falls below 10^-4"
+    # trainer.extend(extensions.ExponentialShift('lr', 0.1),
+    #               trigger=(1, 'epoch'))
 
     def translate_one(source, target):
         words = europal.split_sentence(source)
@@ -267,7 +217,8 @@ def main():
     trainer.extend(translate, trigger=(4000, 'iteration'))
     trainer.extend(
         CalculateBleu(
-            model, test_data, 'validation/main/bleu', device=args.gpu),
+            model, test_data, 'validation/main/bleu',
+            device=args.gpu, batch=args.batchsize // 4),
         trigger=(4000, 'iteration'))
     print('start training')
     trainer.run()
