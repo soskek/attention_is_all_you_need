@@ -8,6 +8,8 @@ import chainer.functions as F
 import chainer.links as L
 from chainer import reporter
 
+from weight_normalization import weight_normalization as WN
+
 
 def sentence_block_embed(embed, x):
     batch, length = x.shape
@@ -54,7 +56,8 @@ class ConvGLU(chainer.Chain):
     def __init__(self, n_units, width=5, dropout=0.2, nopad=False):
         init_conv = VarInNormal(4. * (1. - dropout))
         super(ConvGLU, self).__init__(
-            conv=L.Convolution2D(
+            conv=WN.convert_with_weight_normalization(
+                L.Convolution2D,
                 n_units, 2 * n_units,
                 ksize=(width, 1),
                 stride=(1, 1),
