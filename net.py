@@ -226,9 +226,12 @@ class Seq2seq(chainer.Chain):
             return pred_block
         else:
             concat_y_out_block = y_out_block.reshape((batch * y_length))
-            loss = F.sum(F.softmax_cross_entropy(
-                concat_pred_block, concat_y_out_block, reduce='mean'))
+            loss = F.softmax_cross_entropy(
+                concat_pred_block, concat_y_out_block, reduce='mean')
             reporter.report({'loss': loss.data}, self)
+            accuracy = F.accuracy(
+                concat_pred_block, concat_y_out_block, ignore_label=-1)
+            reporter.report({'acc': accuracy.data}, self)
             perp = self.xp.exp(loss.data)
             reporter.report({'perp': perp}, self)
             return loss
