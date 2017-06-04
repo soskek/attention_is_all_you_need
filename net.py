@@ -8,6 +8,7 @@ import chainer.functions as F
 import chainer.links as L
 from chainer import reporter
 
+from subfuncs import gradient_multiplier
 from weight_normalization import weight_normalization as WN
 
 
@@ -53,7 +54,7 @@ class VarInNormal(chainer.initializer.Initializer):
 
 
 class ConvGLU(chainer.Chain):
-    def __init__(self, n_units, width=5, dropout=0.2, nopad=False):
+    def __init__(self, n_units, width=3, dropout=0.2, nopad=False):
         init_conv = VarInNormal(4. * (1. - dropout))
         super(ConvGLU, self).__init__(
             conv=WN.convert_with_weight_normalization(
@@ -75,11 +76,6 @@ class ConvGLU(chainer.Chain):
 # unit, we initialize weights from N (0, p 1/nl) where nl is the number of
 # input connections for each neuron.
 
-# TODO: For convolutional decoders with multiple attention, we
-# scale the gradients for the encoder layers by the number
-# of attention mechanisms we use; we exclude source word
-# embeddings
-
 
 class ConvGLUEncoder(chainer.Chain):
     def __init__(self, n_layers, n_units, width=5, dropout=0.2):
@@ -100,15 +96,16 @@ class ConvGLUEncoder(chainer.Chain):
 
 
 class ConvGLUDecoder(chainer.Chain):
-    def __init__(self, n_layers, n_units, width=5, dropout=0.2):
+    def __init__(self, n_layers, n_units, width=3, dropout=0.2):
         super(ConvGLUDecoder, self).__init__()
         links = [('l{}'.format(i + 1),
-                  ConvGLU(n_units, width=(width // 2 + 1),
+                  ConvGLU(n_units, width=width,
                           dropout=dropout, nopad=True))
                  for i in range(n_layers)]
         for link in links:
             self.add_link(*link)
         self.conv_names = [name for name, _ in links]
+        self.width = width
 
         init_preatt = VarInNormal(1.)
         links = [('preatt{}'.format(i + 1),
@@ -123,18 +120,19 @@ class ConvGLUDecoder(chainer.Chain):
         att_scale = self.xp.sum(
             mask, axis=2, keepdims=True)[:, None, :, :] ** 0.5
         pad = self.xp.zeros(
-            (x.shape[0], x.shape[1], 2, 1), dtype=x.dtype)
+            (x.shape[0], x.shape[1], self.width - 1, 1), dtype=x.dtype)
         base_x = x
         z = F.squeeze(z, axis=3)
+        # Note: these behaviors of input, output, and attention result
+        # may refer to the code by authors, which looks little different
+        # from the paper's saying.
         for conv_name, preatt_name in zip(self.conv_names, self.preatt_names):
-            x = x + getattr(self, conv_name)(F.concat([pad, x], axis=2))
-            x *= scale
-            preatt = seq_linear(getattr(self, preatt_name), x)
+            out = getattr(self, conv_name)(F.concat([pad, x], axis=2))
+            preatt = seq_linear(getattr(self, preatt_name), out)
             query = base_x + preatt
-            query = F.squeeze(x, axis=3)
-            c = self.attend(query, z, ze, mask)
-            c *= att_scale
-            x = x + c
+            query = F.squeeze(query, axis=3)
+            c = self.attend(query, z, ze, mask) * att_scale
+            x = (x + (c + out) * scale) * scale
         return x
 
     def attend(self, query, key, value, mask, minfs=None):
@@ -160,7 +158,7 @@ class ConvGLUDecoder(chainer.Chain):
 class Seq2seq(chainer.Chain):
 
     def __init__(self, n_layers, n_source_vocab, n_target_vocab, n_units,
-                 max_length=1024, dropout=0.2):
+                 max_length=128, dropout=0.2):
         init_emb = chainer.initializers.Normal(0.1)
         init_out = VarInNormal(1.)
         super(Seq2seq, self).__init__(
@@ -172,8 +170,8 @@ class Seq2seq(chainer.Chain):
                                        initialW=init_emb),
             embed_position_y=L.EmbedID(max_length, n_units,
                                        initialW=init_emb),
-            encoder=ConvGLUEncoder(n_layers, n_units, 5, dropout),
-            decoder=ConvGLUDecoder(n_layers, n_units, 5, dropout),
+            encoder=ConvGLUEncoder(n_layers, n_units, 3, dropout),
+            decoder=ConvGLUDecoder(n_layers, n_units, 3, dropout),
             W=L.Linear(n_units, n_target_vocab, initialW=init_out),
         )
         self.n_layers = n_layers
@@ -203,11 +201,14 @@ class Seq2seq(chainer.Chain):
 
         # Encode and decode before output
         z_block = self.encoder(ex_block[:, :, :, None])
+        scale = 0.5 ** 0.5
+        z_block = gradient_multiplier(z_block, 1. / self.n_layers / 2)
         ze_block = F.broadcast_to(
-            F.transpose(z_block + ex_block[:, :, :, None], (0, 1, 3, 2)),
+            F.transpose(
+                (z_block + ex_block[:, :, :, None]) * scale, (0, 1, 3, 2)),
             (batch, self.n_units, y_length, x_length))
-        z_mask = (x_block.data[:, None, :] >= 0) * \
-            (y_in_block.data[:, :, None] >= 0)
+        z_mask = (x_block[:, None, :] >= 0) * \
+            (y_in_block[:, :, None] >= 0)
         h_block = self.decoder(ey_block[:, :, :, None],
                                z_block, ze_block, z_mask)
         h_block = F.squeeze(h_block, axis=3)
@@ -235,26 +236,25 @@ class Seq2seq(chainer.Chain):
     def translate(self, x_block, max_length=50):
         # TODO: efficient inference by re-using convolution result
         with chainer.no_backprop_mode():
-            if isinstance(x_block, list):
-                x_block = chainer.dataset.convert.concat_examples(
-                    x_block, device=None, padding=-1)
-            batch, x_length = x_block.shape
-            y_block = self.xp.zeros((batch, 1), dtype=x_block.dtype)
-            x_block = chainer.Variable(x_block)
-            y_block = chainer.Variable(y_block)
-            eos_flags = self.xp.zeros((batch, ), dtype=x_block.dtype)
+            with chainer.using_config('train', False):
+                if isinstance(x_block, list):
+                    x_block = chainer.dataset.convert.concat_examples(
+                        x_block, device=None, padding=-1)
+                batch, x_length = x_block.shape
+                y_block = self.xp.zeros((batch, 1), dtype=x_block.dtype)
+                eos_flags = self.xp.zeros((batch, ), dtype=x_block.dtype)
 
-            result = []
-            for i in range(max_length):
-                log_prob_block = self(x_block, y_block, y_block,
-                                      get_prediction=True)
-                log_prob_tail = log_prob_block[:, -1, :]
-                ys = self.xp.argmax(log_prob_tail.data, axis=1).astype('i')
-                result.append(ys)
-                y_block = F.concat([y_block, ys[:, None]], axis=1)
-                eos_flags += (ys == 0)
-                if self.xp.all(eos_flags):
-                    break
+                result = []
+                for i in range(max_length):
+                    log_prob_block = self(x_block, y_block, y_block,
+                                          get_prediction=True)
+                    log_prob_tail = log_prob_block[:, -1, :]
+                    ys = self.xp.argmax(log_prob_tail.data, axis=1).astype('i')
+                    result.append(ys)
+                    y_block = F.concat([y_block, ys[:, None]], axis=1).data
+                    eos_flags += (ys == 0)
+                    if self.xp.all(eos_flags):
+                        break
 
         result = cuda.to_cpu(self.xp.stack(result).T)
 

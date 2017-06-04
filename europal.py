@@ -26,6 +26,7 @@ def split_sentence(s):
 
 
 def open_file(path):
+    """
     if path.endswith('.gz'):
         return gzip.open(path, 'rt', 'utf-8')
     else:
@@ -35,6 +36,8 @@ def open_file(path):
             return open_file(gz)
         else:
             return io.open(path, encoding='utf-8', errors='ignore')
+    """
+    return io.open(path, encoding='utf-8', errors='ignore')
 
 
 def count_lines(path):

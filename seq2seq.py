@@ -36,7 +36,8 @@ def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
 
     Returns:
         Tuple of Converted array.
-            (input_sent_batch_array, target_sent_batch_array).
+            (input_sent_batch_array, target_sent_batch_input_array,
+            target_sent_batch_output_array).
             The shape of each array is `(batchsize, max_sentence_length)`.
             All sentences are padded with -1 to reach max_sentence_length.
     """
@@ -80,17 +81,18 @@ class CalculateBleu(chainer.training.Extension):
     def __call__(self, trainer):
         print('## Calculate BLEU')
         with chainer.no_backprop_mode():
-            references = []
-            hypotheses = []
-            for i in range(0, len(self.test_data), self.batch):
-                sources, targets = zip(*self.test_data[i:i + self.batch])
-                references.extend([[t.tolist()] for t in targets])
+            with chainer.using_config('train', False):
+                references = []
+                hypotheses = []
+                for i in range(0, len(self.test_data), self.batch):
+                    sources, targets = zip(*self.test_data[i:i + self.batch])
+                    references.extend([[t.tolist()] for t in targets])
 
-                sources = [
-                    chainer.dataset.to_device(self.device, x) for x in sources]
-                ys = [y.tolist()
-                      for y in self.model.translate(sources, self.max_length)]
-                hypotheses.extend(ys)
+                    sources = [
+                        chainer.dataset.to_device(self.device, x) for x in sources]
+                    ys = [y.tolist()
+                          for y in self.model.translate(sources, self.max_length)]
+                    hypotheses.extend(ys)
 
         bleu = bleu_score.corpus_bleu(
             references, hypotheses,
@@ -143,7 +145,7 @@ def main():
         print('Original training data size: %d' % len(source_data))
         train_data = [(s, t)
                       for s, t in six.moves.zip(source_data, target_data)
-                      if 0 < len(s) < 50 and 0 < len(t) < 50]
+                      if 0 < len(s) < 45 and 0 < len(t) < 45]
         print('Filtered training data size: %d' % len(train_data))
 
         en_path = os.path.join(args.input, 'dev', 'newstest2013.en')
@@ -160,14 +162,16 @@ def main():
     target_words = {i: w for w, i in target_ids.items()}
     source_words = {i: w for w, i in source_ids.items()}
 
-    model = net.Seq2seq(10, len(source_ids), len(target_ids), args.unit)
+    model = net.Seq2seq(15, len(source_ids), len(target_ids), args.unit)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
 
-    optimizer = chainer.optimizers.NesterovAG(lr=0.01, momentum=0.99)
+    #optimizer = chainer.optimizers.NesterovAG(lr=0.1, momentum=0.99)
+    optimizer = chainer.optimizers.NesterovAG(lr=0.25, momentum=0.99)
     optimizer.setup(model)
-    optimizer.add_hook(chainer.optimizer.GradientClipping(0.25))
+    # optimizer.add_hook(chainer.optimizer.GradientClipping(0.25))
+    optimizer.add_hook(chainer.optimizer.GradientClipping(0.1))
 
     train_iter = chainer.iterators.SerialIterator(train_data, args.batchsize)
     updater = training.StandardUpdater(
@@ -185,8 +189,10 @@ def main():
     # TODO: realize "We use a learning rate of 0.25 and once the validation
     # perplexity stops improving, we reduce the learning rate by an order of
     # magnitude after each epoch until it falls below 10^-4"
-    # trainer.extend(extensions.ExponentialShift('lr', 0.1),
+    # trainer.extend(extensions.ExponentialShift('lr', 0.25),
     #               trigger=(1, 'epoch'))
+    trainer.extend(extensions.ExponentialShift('lr', 0.75),
+                   trigger=(1, 'epoch'))
 
     def translate_one(source, target):
         words = europal.split_sentence(source)
@@ -214,12 +220,12 @@ def main():
         target = ' '.join([target_words[i] for i in target])
         translate_one(source, target)
 
-    trainer.extend(translate, trigger=(4000, 'iteration'))
+    trainer.extend(translate, trigger=(200, 'iteration'))
     trainer.extend(
         CalculateBleu(
             model, test_data, 'validation/main/bleu',
             device=args.gpu, batch=args.batchsize // 4),
-        trigger=(4000, 'iteration'))
+        trigger=(20000, 'iteration'))
     print('start training')
     trainer.run()
 
