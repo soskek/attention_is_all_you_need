@@ -12,6 +12,9 @@ from subfuncs import gradient_multiplier
 from weight_normalization import weight_normalization as WN
 
 
+scale05 = 0.5 ** 0.5
+
+
 def sentence_block_embed(embed, x):
     batch, length = x.shape
     e = embed(x.reshape((batch * length, )))
@@ -88,10 +91,9 @@ class ConvGLUEncoder(chainer.Chain):
         self.conv_names = [name for name, _ in links]
 
     def __call__(self, x):
-        scale = 0.5 ** 0.5
         for name in self.conv_names:
             x = x + getattr(self, name)(x)
-            x *= scale
+            x *= scale05
         return x
 
 
@@ -116,7 +118,6 @@ class ConvGLUDecoder(chainer.Chain):
         self.preatt_names = [name for name, _ in links]
 
     def __call__(self, x, z, ze, mask):
-        scale = 0.5 ** 0.5
         att_scale = self.xp.sum(
             mask, axis=2, keepdims=True)[:, None, :, :] ** 0.5
         pad = self.xp.zeros(
@@ -132,7 +133,7 @@ class ConvGLUDecoder(chainer.Chain):
             query = base_x + preatt
             query = F.squeeze(query, axis=3)
             c = self.attend(query, z, ze, mask) * att_scale
-            x = (x + (c + out) * scale) * scale
+            x = (x + (c + out) * scale05) * scale05
         return x
 
     def attend(self, query, key, value, mask, minfs=None):
@@ -189,9 +190,9 @@ class Seq2seq(chainer.Chain):
         ey_block = sentence_block_embed(self.embed_y, y_in_block)
         max_len = max(x_length, y_length)
         position_block = self.xp.broadcast_to(
-            self.xp.arange(max_len, dtype='i')[None, ], (batch, max_len))
-        if max_len > self.max_length:
-            position_block[:, self.max_length:] = self.max_length - 1
+            self.xp.clip(
+                self.xp.arange(max_len), 0, self.max_length - 1)[None, ],
+            (batch, max_len)).astype('i')
         px_block = sentence_block_embed(
             self.embed_position_x, position_block[:, :x_length])
         py_block = sentence_block_embed(
@@ -201,14 +202,15 @@ class Seq2seq(chainer.Chain):
 
         # Encode and decode before output
         z_block = self.encoder(ex_block[:, :, :, None])
-        scale = 0.5 ** 0.5
+
         z_block = gradient_multiplier(z_block, 1. / self.n_layers / 2)
         ze_block = F.broadcast_to(
             F.transpose(
-                (z_block + ex_block[:, :, :, None]) * scale, (0, 1, 3, 2)),
+                (z_block + ex_block[:, :, :, None]) * scale05, (0, 1, 3, 2)),
             (batch, self.n_units, y_length, x_length))
         z_mask = (x_block[:, None, :] >= 0) * \
             (y_in_block[:, :, None] >= 0)
+
         h_block = self.decoder(ey_block[:, :, :, None],
                                z_block, ze_block, z_mask)
         h_block = F.squeeze(h_block, axis=3)
@@ -228,12 +230,11 @@ class Seq2seq(chainer.Chain):
             concat_y_out_block = y_out_block.reshape((batch * y_length))
             loss = F.softmax_cross_entropy(
                 concat_pred_block, concat_y_out_block, reduce='mean')
-            reporter.report({'loss': loss.data}, self)
             accuracy = F.accuracy(
                 concat_pred_block, concat_y_out_block, ignore_label=-1)
-            reporter.report({'acc': accuracy.data}, self)
             perp = self.xp.exp(loss.data)
-            reporter.report({'perp': perp}, self)
+            rep = {'loss': loss.data, 'acc': accuracy.data, 'perp': perp}
+            reporter.report(rep, self)
             return loss
 
     def translate(self, x_block, max_length=50):
