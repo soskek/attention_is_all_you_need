@@ -10,7 +10,7 @@ from chainer import reporter
 
 from subfuncs import gradient_multiplier
 from weight_normalization import weight_normalization as WN
-
+from seq2seq import source_pad_concat_convert
 
 scale05 = 0.5 ** 0.5
 
@@ -218,15 +218,27 @@ class Seq2seq(chainer.Chain):
         # It is faster to concatenate data before calculating loss
         # because only one matrix multiplication is called.
         assert(h_block.shape == (batch, self.n_units, y_length))
-        concat_h_block = F.transpose(h_block, (0, 2, 1)).reshape(
-            (batch * y_length, self.n_units))
-        concat_h_block = F.dropout(concat_h_block, ratio=self.dropout)
-        concat_pred_block = self.W(concat_h_block)
+
         if get_prediction:
+            """
+            concat_h_block = F.transpose(h_block, (0, 2, 1)).reshape(
+                (batch * y_length, self.n_units))
+            concat_h_block = F.dropout(concat_h_block, ratio=self.dropout)
+            concat_pred_block = self.W(concat_h_block)
+
             pred_block = concat_pred_block.reshape(
                 (batch, y_length, self.n_target_vocab))
             return pred_block
+            """
+            pred_tail = self.W(
+                F.dropout(h_block[:, :, -1], ratio=self.dropout))
+            return pred_tail
         else:
+            concat_h_block = F.transpose(h_block, (0, 2, 1)).reshape(
+                (batch * y_length, self.n_units))
+            concat_h_block = F.dropout(concat_h_block, ratio=self.dropout)
+            concat_pred_block = self.W(concat_h_block)
+
             concat_y_out_block = y_out_block.reshape((batch * y_length))
             loss = F.softmax_cross_entropy(
                 concat_pred_block, concat_y_out_block, reduce='mean')
@@ -242,17 +254,21 @@ class Seq2seq(chainer.Chain):
         with chainer.no_backprop_mode():
             with chainer.using_config('train', False):
                 if isinstance(x_block, list):
-                    x_block = chainer.dataset.convert.concat_examples(
-                        x_block, device=None, padding=-1)
+                    x_block = source_pad_concat_convert(
+                        x_block, device=None)
                 batch, x_length = x_block.shape
                 y_block = self.xp.zeros((batch, 1), dtype=x_block.dtype)
                 eos_flags = self.xp.zeros((batch, ), dtype=x_block.dtype)
 
                 result = []
                 for i in range(max_length):
+                    """
                     log_prob_block = self(x_block, y_block, y_block,
                                           get_prediction=True)
                     log_prob_tail = log_prob_block[:, -1, :]
+                    """
+                    log_prob_tail = self(x_block, y_block, y_block,
+                                         get_prediction=True)
                     ys = self.xp.argmax(log_prob_tail.data, axis=1).astype('i')
                     result.append(ys)
                     y_block = F.concat([y_block, ys[:, None]], axis=1).data

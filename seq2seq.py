@@ -64,6 +64,18 @@ def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
     return (x_block, y_in_block, y_out_block)
 
 
+def source_pad_concat_convert(x_seqs, device, eos_id=0):
+    x_block = convert.concat_examples(x_seqs, device, padding=-1)
+    xp = cuda.get_array_module(x_block)
+
+    # add eos
+    x_block = xp.pad(x_block, ((0, 0), (0, 1)),
+                     'constant', constant_values=-1)
+    for i_batch, seq in enumerate(x_seqs):
+        x_block[i_batch, len(seq)] = eos_id
+    return x_block
+
+
 class CalculateBleu(chainer.training.Extension):
 
     trigger = 1, 'epoch'
