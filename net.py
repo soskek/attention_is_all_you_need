@@ -8,9 +8,9 @@ import chainer.functions as F
 import chainer.links as L
 from chainer import reporter
 
+from seq2seq import source_pad_concat_convert
 from subfuncs import gradient_multiplier
 from weight_normalization import weight_normalization as WN
-from seq2seq import source_pad_concat_convert
 
 scale05 = 0.5 ** 0.5
 
@@ -18,7 +18,10 @@ scale05 = 0.5 ** 0.5
 def sentence_block_embed(embed, x):
     batch, length = x.shape
     e = embed(x.reshape((batch * length, )))
-    return e.reshape((batch, e.shape[1], length))
+    # (batch * length, units)
+    e = F.transpose(F.stack(F.split_axis(e, batch, axis=0), axis=0), (0, 2, 1))
+    # (batch, units, length)
+    return e
 
 
 def seq_linear(linear, x):
@@ -70,10 +73,13 @@ class ConvGLU(chainer.Chain):
         )
         self.dropout = dropout
 
-    def __call__(self, x):
+    def __call__(self, x, mask=None):
         x = F.dropout(x, ratio=self.dropout)
         out, pregate = F.split_axis(self.conv(x), 2, axis=1)
-        return out * F.sigmoid(pregate)
+        out = out * F.sigmoid(pregate)
+        if mask is not None:
+            out *= mask
+        return out
 
 # TODO: For layers whose output is not directly fed to a gated linear
 # unit, we initialize weights from N (0, p 1/nl) where nl is the number of
@@ -81,7 +87,7 @@ class ConvGLU(chainer.Chain):
 
 
 class ConvGLUEncoder(chainer.Chain):
-    def __init__(self, n_layers, n_units, width=5, dropout=0.2):
+    def __init__(self, n_layers, n_units, width=3, dropout=0.2):
         super(ConvGLUEncoder, self).__init__()
         links = [('l{}'.format(i + 1),
                   ConvGLU(n_units, width=width, dropout=dropout))
@@ -90,9 +96,9 @@ class ConvGLUEncoder(chainer.Chain):
             self.add_link(*link)
         self.conv_names = [name for name, _ in links]
 
-    def __call__(self, x):
+    def __call__(self, x, mask=None):
         for name in self.conv_names:
-            x = x + getattr(self, name)(x)
+            x = x + getattr(self, name)(x, mask)
             x *= scale05
         return x
 
@@ -124,16 +130,21 @@ class ConvGLUDecoder(chainer.Chain):
             (x.shape[0], x.shape[1], self.width - 1, 1), dtype=x.dtype)
         base_x = x
         z = F.squeeze(z, axis=3)
+        conv_mask = mask[:, :, 0][:, None, :, None]
+        # (batch, 1, dec_l, 1)
         # Note: these behaviors of input, output, and attention result
         # may refer to the code by authors, which looks little different
         # from the paper's saying.
         for conv_name, preatt_name in zip(self.conv_names, self.preatt_names):
-            out = getattr(self, conv_name)(F.concat([pad, x], axis=2))
+            out = getattr(self, conv_name)(
+                F.concat([pad, x], axis=2), conv_mask)
+
             preatt = seq_linear(getattr(self, preatt_name), out)
             query = base_x + preatt
             query = F.squeeze(query, axis=3)
             c = self.attend(query, z, ze, mask) * att_scale
             x = (x + (c + out) * scale05) * scale05
+
         return x
 
     def attend(self, query, key, value, mask, minfs=None):
@@ -193,6 +204,7 @@ class Seq2seq(chainer.Chain):
             self.xp.clip(
                 self.xp.arange(max_len), 0, self.max_length - 1)[None, ],
             (batch, max_len)).astype('i')
+
         px_block = sentence_block_embed(
             self.embed_position_x, position_block[:, :x_length])
         py_block = sentence_block_embed(
@@ -201,7 +213,8 @@ class Seq2seq(chainer.Chain):
         ey_block += py_block
 
         # Encode and decode before output
-        z_block = self.encoder(ex_block[:, :, :, None])
+        z_block = self.encoder(ex_block[:, :, :, None],
+                               (x_block[:, None, :, None] >= 0))
 
         z_block = gradient_multiplier(z_block, 1. / self.n_layers / 2)
         ze_block = F.broadcast_to(
@@ -253,13 +266,12 @@ class Seq2seq(chainer.Chain):
         # TODO: efficient inference by re-using convolution result
         with chainer.no_backprop_mode():
             with chainer.using_config('train', False):
-                if isinstance(x_block, list):
-                    x_block = source_pad_concat_convert(
-                        x_block, device=None)
+                # if isinstance(x_block, list):
+                x_block = source_pad_concat_convert(
+                    x_block, device=None)
                 batch, x_length = x_block.shape
                 y_block = self.xp.zeros((batch, 1), dtype=x_block.dtype)
                 eos_flags = self.xp.zeros((batch, ), dtype=x_block.dtype)
-
                 result = []
                 for i in range(max_length):
                     """
