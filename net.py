@@ -260,8 +260,9 @@ class Seq2seq(chainer.Chain):
             perp = self.xp.exp(loss.data)
 
             # Report the Values
-            rep = {'loss': loss.data, 'acc': accuracy.data, 'perp': perp}
-            reporter.report(rep, self)
+            reporter.report({'loss': loss.data}, self)
+            reporter.report({'acc': accuracy.data}, self)
+            reporter.report({'perp': perp}, self)
             return loss
 
     def translate(self, x_block, max_length=50):
@@ -276,11 +277,6 @@ class Seq2seq(chainer.Chain):
                 eos_flags = self.xp.zeros((batch, ), dtype=x_block.dtype)
                 result = []
                 for i in range(max_length):
-                    """
-                    log_prob_block = self(x_block, y_block, y_block,
-                                          get_prediction=True)
-                    log_prob_tail = log_prob_block[:, -1, :]
-                    """
                     log_prob_tail = self(x_block, y_block, y_block,
                                          get_prediction=True)
                     ys = self.xp.argmax(log_prob_tail.data, axis=1).astype('i')

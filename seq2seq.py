@@ -120,8 +120,6 @@ def main():
                         help='Number of sweeps over the dataset to train')
     parser.add_argument('--gpu', '-g', type=int, default=-1,
                         help='GPU ID (negative value indicates CPU)')
-    parser.add_argument('--resume', '-r', default='',
-                        help='Resume the training from snapshot')
     parser.add_argument('--unit', '-u', type=int, default=512,
                         help='Number of units')
     parser.add_argument('--input', '-i', type=str, default='wmt',
@@ -190,9 +188,10 @@ def main():
         train_iter, optimizer,
         converter=seq2seq_pad_concat_convert, device=args.gpu)
 
-    trainer = training.Trainer(updater, (args.epoch, 'epoch'))
-    trainer.extend(extensions.LogReport(trigger=(1000, 'iteration')),
-                   trigger=(1000, 'iteration'))
+    trainer = training.Trainer(updater, (args.epoch, 'epoch'), out=args.out)
+    trigger = (min(1000, len(train_data) // args.batchsize), 'iteration')
+    trainer.extend(extensions.LogReport(trigger=trigger),
+                   trigger=trigger)
     trainer.extend(extensions.PrintReport(
         ['epoch', 'iteration',
          'main/loss', 'val/main/loss',
@@ -200,7 +199,7 @@ def main():
          'main/acc', 'val/main/acc',
          'val/main/bleu',
          'elapsed_time']),
-        trigger=(1000, 'iteration'))
+        trigger=trigger)
     # TODO: realize "We use a learning rate of 0.25 and once the validation
     # perplexity stops improving, we reduce the learning rate by an order of
     # magnitude after each epoch until it falls below 10^-4"
