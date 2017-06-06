@@ -123,14 +123,14 @@ class ConvGLUDecoder(chainer.Chain):
             self.add_link(*link)
         self.preatt_names = [name for name, _ in links]
 
-    def __call__(self, x, z, ze, mask):
+    def __call__(self, x, z, ze, mask, conv_mask):
         att_scale = self.xp.sum(
             mask, axis=2, keepdims=True)[:, None, :, :] ** 0.5
         pad = self.xp.zeros(
             (x.shape[0], x.shape[1], self.width - 1, 1), dtype=x.dtype)
         base_x = x
         z = F.squeeze(z, axis=3)
-        conv_mask = mask[:, :, 0][:, None, :, None]
+        # conv_mask = mask[:, :, 0][:, None, :, None]
         # (batch, 1, dec_l, 1)
         # Note: these behaviors of input, output, and attention result
         # may refer to the code by authors, which looks little different
@@ -212,10 +212,12 @@ class Seq2seq(chainer.Chain):
         ex_block += px_block
         ey_block += py_block
 
-        # Encode and decode before output
-        z_block = self.encoder(ex_block[:, :, :, None],
-                               (x_block[:, None, :, None] >= 0))
+        # Encode
+        ex_mask = self.xp.broadcast_to(
+            x_block[:, None, :, None] >= 0, ex_block[:, :, :, None].shape)
+        z_block = self.encoder(ex_block[:, :, :, None], ex_mask)
 
+        # Prepare attention
         z_block = gradient_multiplier(z_block, 1. / self.n_layers / 2)
         ze_block = F.broadcast_to(
             F.transpose(
@@ -224,8 +226,11 @@ class Seq2seq(chainer.Chain):
         z_mask = (x_block[:, None, :] >= 0) * \
             (y_in_block[:, :, None] >= 0)
 
+        # Decode (target-encode before output)
+        ey_mask = self.xp.broadcast_to(
+            y_in_block[:, None, :, None] >= 0, ey_block[:, :, :, None].shape)
         h_block = self.decoder(ey_block[:, :, :, None],
-                               z_block, ze_block, z_mask)
+                               z_block, ze_block, z_mask, ey_mask)
         h_block = F.squeeze(h_block, axis=3)
 
         # It is faster to concatenate data before calculating loss
