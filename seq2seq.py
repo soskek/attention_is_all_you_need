@@ -18,6 +18,7 @@ from chainer.training import extensions
 
 import europal
 import net
+from subfuncs import FailMinValueTrigger
 
 
 def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
@@ -108,7 +109,8 @@ class CalculateBleu(chainer.training.Extension):
 
         bleu = bleu_score.corpus_bleu(
             references, hypotheses,
-            smoothing_function=bleu_score.SmoothingFunction().method1)
+            smoothing_function=bleu_score.SmoothingFunction().method1) * 100
+        print('BLEU:', bleu)
         reporter.report({self.key: bleu})
 
 
@@ -155,7 +157,7 @@ def main():
         print('Original training data size: %d' % len(source_data))
         train_data = [(s, t)
                       for s, t in six.moves.zip(source_data, target_data)
-                      if 0 < len(s) < 45 and 0 < len(t) < 45]
+                      if 0 < len(s) < 50 and 0 < len(t) < 50]
         print('Filtered training data size: %d' % len(train_data))
 
         en_path = os.path.join(args.input, 'dev', 'newstest2013.en')
@@ -172,39 +174,60 @@ def main():
     target_words = {i: w for w, i in target_ids.items()}
     source_words = {i: w for w, i in source_ids.items()}
 
+    # Define Model
     model = net.Seq2seq(15, len(source_ids), len(target_ids), args.unit)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
 
+    # Setup Optimizer
     optimizer = chainer.optimizers.NesterovAG(lr=0.25, momentum=0.99)
     optimizer.setup(model)
     optimizer.add_hook(chainer.optimizer.GradientClipping(0.1))
 
+    # Setup Trainer
     train_iter = chainer.iterators.SerialIterator(train_data, args.batchsize)
     test_iter = chainer.iterators.SerialIterator(test_data, args.batchsize,
                                                  repeat=False, shuffle=False)
+    iter_per_epoch = len(train_data) // args.batchsize
+    print('Number of iter/epoch =', iter_per_epoch)
+
     updater = training.StandardUpdater(
         train_iter, optimizer,
         converter=seq2seq_pad_concat_convert, device=args.gpu)
 
     trainer = training.Trainer(updater, (args.epoch, 'epoch'), out=args.out)
-    trigger = (min(1000, len(train_data) // args.batchsize), 'iteration')
-    trainer.extend(extensions.LogReport(trigger=trigger),
-                   trigger=trigger)
-    trainer.extend(extensions.PrintReport(
-        ['epoch', 'iteration',
-         'main/loss', 'val/main/loss',
-         'main/perp', 'val/main/perp',
-         'main/acc', 'val/main/acc',
-         'val/main/bleu',
-         'elapsed_time']),
-        trigger=trigger)
-    # TODO: realize "We use a learning rate of 0.25 and once the validation
-    # perplexity stops improving, we reduce the learning rate by an order of
-    # magnitude after each epoch until it falls below 10^-4"
-    trainer.extend(extensions.ExponentialShift('lr', 0.25),
-                   trigger=(1, 'epoch'))
+
+    log_trigger = (min(1000, iter_per_epoch // 2), 'iteration')
+
+    def floor_step(trigger):
+        floored = trigger[0] - trigger[0] % log_trigger[0]
+        if floored <= 0:
+            floored = trigger[0]
+        return (floored, trigger[1])
+
+    # Validation every half epoch
+    eval_trigger = floor_step((iter_per_epoch // 2, 'iteration'))
+    fail_trigger = FailMinValueTrigger('val/main/perp', eval_trigger)
+    record_trigger = training.triggers.MaxValueTrigger(
+        'val/main/perp', eval_trigger)
+
+    evaluator = extensions.Evaluator(
+        test_iter, model,
+        converter=seq2seq_pad_concat_convert,
+        device=args.gpu)
+    evaluator.default_name = 'val'
+    trainer.extend(evaluator, trigger=eval_trigger)
+    # Only if validation perplexity fails to be improved,
+    # lr is decayed (until 1e-4).
+    trainer.extend(extensions.ExponentialShift('lr', 0.1, target=1e-4),
+                   trigger=fail_trigger)
+    trainer.extend(extensions.observe_lr(), trigger=eval_trigger)
+    # Only if a model gets best validation score,
+    # save the model
+    trainer.extend(extensions.snapshot_object(
+        model, 'model_iter_{.updater.iteration}.npz'),
+        trigger=record_trigger)
 
     def translate_one(source, target):
         words = europal.split_sentence(source)
@@ -232,19 +255,29 @@ def main():
         target = ' '.join([target_words[i] for i in target])
         translate_one(source, target)
 
-    evaluator = extensions.Evaluator(
-        test_iter, model,
-        converter=seq2seq_pad_concat_convert,
-        device=args.gpu)
-    evaluator.default_name = 'val'
-    trainer.extend(evaluator, trigger=(1, 'epoch'))
-
-    trainer.extend(translate, trigger=(200, 'iteration'))
+    # Gereneration Test
+    trainer.extend(
+        translate,
+        trigger=(min(200, iter_per_epoch), 'iteration'))
+    # Calculate BLEU every half epoch
     trainer.extend(
         CalculateBleu(
             model, test_data, 'val/main/bleu',
             device=args.gpu, batch=args.batchsize // 4),
-        trigger=(1, 'epoch'))
+        trigger=floor_step((iter_per_epoch // 2, 'iteration')))
+
+    # Log
+    trainer.extend(extensions.LogReport(trigger=log_trigger),
+                   trigger=log_trigger)
+    trainer.extend(extensions.PrintReport(
+        ['epoch', 'iteration',
+         'main/loss', 'val/main/loss',
+         'main/perp', 'val/main/perp',
+         'main/acc', 'val/main/acc',
+         'val/main/bleu',
+         'lr',
+         'elapsed_time']),
+        trigger=log_trigger)
 
     print('start training')
     trainer.run()

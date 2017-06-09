@@ -260,9 +260,9 @@ class Seq2seq(chainer.Chain):
             perp = self.xp.exp(loss.data)
 
             # Report the Values
-            reporter.report({'loss': loss.data}, self)
-            reporter.report({'acc': accuracy.data}, self)
-            reporter.report({'perp': perp}, self)
+            reporter.report({'loss': loss.data,
+                             'acc': accuracy.data,
+                             'perp': perp}, self)
             return loss
 
     def translate(self, x_block, max_length=50):
