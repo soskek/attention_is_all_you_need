@@ -26,17 +26,6 @@ def split_sentence(s):
 
 
 def open_file(path):
-    """
-    if path.endswith('.gz'):
-        return gzip.open(path, 'rt', 'utf-8')
-    else:
-        # Find gzipped version of the file
-        gz = path + '.gz'
-        if os.path.exists(gz):
-            return open_file(gz)
-        else:
-            return io.open(path, encoding='utf-8', errors='ignore')
-    """
     return io.open(path, encoding='utf-8', errors='ignore')
 
 
@@ -54,13 +43,13 @@ def read_file(path):
             yield words
 
 
-def count_words(path):
+def count_words(path, max_vocab_size=40000):
     counts = collections.Counter()
     for words in read_file(path):
         for word in words:
             counts[word] += 1
 
-    vocab = [word for (word, _) in counts.most_common(40000)]
+    vocab = [word for (word, _) in counts.most_common(max_vocab_size)]
     return vocab
 
 

@@ -1,10 +1,9 @@
 # encoding: utf-8
 
 import argparse
-import collections
+import json
 import os.path
 
-from nltk.corpus import comtrans
 from nltk.translate import bleu_score
 import numpy
 import six
@@ -115,67 +114,74 @@ class CalculateBleu(chainer.training.Extension):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Chainer example: seq2seq')
-    parser.add_argument('--batchsize', '-b', type=int, default=64,
+    parser = argparse.ArgumentParser(
+        description='Chainer example: convolutional seq2seq')
+    parser.add_argument('--batchsize', '-b', type=int, default=32,
                         help='Number of images in each mini-batch')
-    parser.add_argument('--epoch', '-e', type=int, default=20,
+    parser.add_argument('--epoch', '-e', type=int, default=100,
                         help='Number of sweeps over the dataset to train')
     parser.add_argument('--gpu', '-g', type=int, default=-1,
                         help='GPU ID (negative value indicates CPU)')
     parser.add_argument('--unit', '-u', type=int, default=512,
                         help='Number of units')
-    parser.add_argument('--input', '-i', type=str, default='wmt',
+    parser.add_argument('--layer', '-l', type=int, default=15,
+                        help='Number of layers')
+    parser.add_argument('--input', '-i', type=str, default='./',
                         help='Input directory')
+    parser.add_argument('--source', '-s', type=str,
+                        default='europarl-v7.fr-en.en',
+                        help='Filename of train data for source language')
+    parser.add_argument('--target', '-t', type=str,
+                        default='europarl-v7.fr-en.fr',
+                        help='Filename of train data for target language')
+    parser.add_argument('--source-valid', '-svalid', type=str,
+                        default='dev/newstest2013.en',
+                        help='Filename of validation data for source language')
+    parser.add_argument('--target-valid', '-tvalid', type=str,
+                        default='dev/newstest2013.fr',
+                        help='Filename of validation data for target language')
     parser.add_argument('--out', '-o', default='result',
                         help='Directory to output the result')
+    parser.add_argument('--source-vocab', type=int, default=40000,
+                        help='Vocabulary size of source language')
+    parser.add_argument('--target-vocab', type=int, default=40000,
+                        help='Vocabulary size of target language')
     args = parser.parse_args()
+    print(json.dumps(args.__dict__, indent=4))
 
-    if False:
-        sentences = comtrans.aligned_sents('alignment-en-fr.txt')
-        source_ids = collections.defaultdict(lambda: len(source_ids))
-        target_ids = collections.defaultdict(lambda: len(target_ids))
-        target_ids['eos']
-        data = []
-        for sentence in sentences:
-            source = numpy.array([source_ids[w] for w in sentence.words], 'i')
-            target = numpy.array([target_ids[w] for w in sentence.mots], 'i')
-            data.append((source, target))
-        print('Source vocabulary: %d' % len(source_ids))
-        print('Target vocabulary: %d' % len(target_ids))
+    # Check file
+    en_path = os.path.join(args.input, args.source)
+    source_vocab = ['<eos>', '<unk>'] + \
+        europal.count_words(en_path, args.source_vocab)
+    source_data = europal.make_dataset(en_path, source_vocab)
+    fr_path = os.path.join(args.input, args.target)
+    target_vocab = ['<eos>', '<unk>'] + \
+        europal.count_words(fr_path, args.target_vocab)
+    target_data = europal.make_dataset(fr_path, target_vocab)
+    assert len(source_data) == len(target_data)
+    print('Original training data size: %d' % len(source_data))
+    train_data = [(s, t)
+                  for s, t in six.moves.zip(source_data, target_data)
+                  if 0 < len(s) < 50 and 0 < len(t) < 50]
+    print('Filtered training data size: %d' % len(train_data))
 
-        test_data = data[:len(data) / 10]
-        train_data = data[len(data) / 10:]
-    else:
-        # Check file
-        en_path = os.path.join(args.input, 'giga-fren.release2.fixed.en')
-        source_vocab = ['<eos>', '<unk>'] + europal.count_words(en_path)
-        source_data = europal.make_dataset(en_path, source_vocab)
-        fr_path = os.path.join(args.input, 'giga-fren.release2.fixed.fr')
-        target_vocab = ['<eos>', '<unk>'] + europal.count_words(fr_path)
-        target_data = europal.make_dataset(fr_path, target_vocab)
-        assert len(source_data) == len(target_data)
-        print('Original training data size: %d' % len(source_data))
-        train_data = [(s, t)
-                      for s, t in six.moves.zip(source_data, target_data)
-                      if 0 < len(s) < 50 and 0 < len(t) < 50]
-        print('Filtered training data size: %d' % len(train_data))
+    en_path = os.path.join(args.input, args.source_valid)
+    source_data = europal.make_dataset(en_path, source_vocab)
+    fr_path = os.path.join(args.input, args.target_valid)
+    target_data = europal.make_dataset(fr_path, target_vocab)
+    assert len(source_data) == len(target_data)
+    test_data = [(s, t) for s, t in six.moves.zip(source_data, target_data)
+                 if 0 < len(s) and 0 < len(t)]
 
-        en_path = os.path.join(args.input, 'dev', 'newstest2013.en')
-        source_data = europal.make_dataset(en_path, source_vocab)
-        fr_path = os.path.join(args.input, 'dev', 'newstest2013.fr')
-        target_data = europal.make_dataset(fr_path, target_vocab)
-        assert len(source_data) == len(target_data)
-        test_data = [(s, t) for s, t in six.moves.zip(source_data, target_data)
-                     if 0 < len(s) and 0 < len(t)]
-
-        source_ids = {word: index for index, word in enumerate(source_vocab)}
-        target_ids = {word: index for index, word in enumerate(target_vocab)}
+    source_ids = {word: index for index, word in enumerate(source_vocab)}
+    target_ids = {word: index for index, word in enumerate(target_vocab)}
 
     target_words = {i: w for w, i in target_ids.items()}
     source_words = {i: w for w, i in source_ids.items()}
 
     # Define Model
-    model = net.Seq2seq(15, len(source_ids), len(target_ids), args.unit)
+    model = net.Seq2seq(
+        args.layer, len(source_ids), len(target_ids), args.unit)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
@@ -198,6 +204,7 @@ def main():
 
     trainer = training.Trainer(updater, (args.epoch, 'epoch'), out=args.out)
 
+    # If you want to change a logging interval, change this number
     log_trigger = (min(1000, iter_per_epoch // 2), 'iteration')
 
     def floor_step(trigger):
