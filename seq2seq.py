@@ -216,7 +216,7 @@ def main():
     # Validation every half epoch
     eval_trigger = floor_step((iter_per_epoch // 2, 'iteration'))
     fail_trigger = FailMinValueTrigger('val/main/perp', eval_trigger)
-    record_trigger = training.triggers.MaxValueTrigger(
+    record_trigger = training.triggers.MinValueTrigger(
         'val/main/perp', eval_trigger)
 
     evaluator = extensions.Evaluator(
