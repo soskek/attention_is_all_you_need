@@ -1,9 +1,9 @@
-# Convolutional Sequence to Sequence Learning
-[Chainer](https://github.com/chainer/chainer/)-based Python implementation of a convolutional seq2seq model.
+# [WIP] Transformer - Attention Is All You Need
+[Chainer](https://github.com/chainer/chainer/)-based Python implementation of Transformer, an attention-based seq2seq model without convolution and recurrence.
 
-This is derived from Chainer's official [seq2seq example](https://github.com/chainer/chainer/tree/seq2seq-europal/examples/seq2seq).
+This is derived from [my other repository](https://github.com/soskek/convolutional_seq2seq), which is derived from Chainer's official [seq2seq example](https://github.com/chainer/chainer/tree/seq2seq-europal/examples/seq2seq).
 
-See [Convolutional Sequence to Sequence Learning](https://arxiv.org/abs/1705.03122), Jonas Gehring, Michael Auli, David Grangier, Denis Yarats, Yann N. Dauphin, arxiv, 2017. [blog post](https://code.facebook.com/posts/1978007565818999/a-%20novel-approach-to-neural-machine-translation/), [Torch code](https://github.com/facebookresearch/fairseq).
+See [Attention Is All You Need](https://arxiv.org/abs/1706.03762), Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin, arxiv, 2017.
 
 ## Requirement
 

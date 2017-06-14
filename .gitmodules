@@ -1,3 +1,0 @@
-[submodule "weight_normalization"]
-	path = weight_normalization
-	url = https://github.com/soskek/weight_normalization.git
