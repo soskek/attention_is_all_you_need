@@ -124,7 +124,7 @@ def main():
                         help='GPU ID (negative value indicates CPU)')
     parser.add_argument('--unit', '-u', type=int, default=512,
                         help='Number of units')
-    parser.add_argument('--layer', '-l', type=int, default=15,
+    parser.add_argument('--layer', '-l', type=int, default=6,
                         help='Number of layers')
     parser.add_argument('--input', '-i', type=str, default='./',
                         help='Input directory')
@@ -187,9 +187,13 @@ def main():
         model.to_gpu(args.gpu)
 
     # Setup Optimizer
-    optimizer = chainer.optimizers.NesterovAG(lr=0.25, momentum=0.99)
+    optimizer = chainer.optimizers.Adam(
+        alpha=args.unit ** (-0.5),
+        beta1=0.9,
+        beta2=0.98,
+        eps=1e-9
+    )
     optimizer.setup(model)
-    optimizer.add_hook(chainer.optimizer.GradientClipping(0.1))
 
     # Setup Trainer
     train_iter = chainer.iterators.SerialIterator(train_data, args.batchsize)
@@ -225,10 +229,6 @@ def main():
         device=args.gpu)
     evaluator.default_name = 'val'
     trainer.extend(evaluator, trigger=eval_trigger)
-    # Only if validation perplexity fails to be improved,
-    # lr is decayed (until 1e-4).
-    trainer.extend(extensions.ExponentialShift('lr', 0.1, target=1e-4),
-                   trigger=fail_trigger)
     trainer.extend(extensions.observe_lr(), trigger=eval_trigger)
     # Only if a model gets best validation score,
     # save the model
