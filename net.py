@@ -337,7 +337,6 @@ class Seq2seq(chainer.Chain):
                 concat_h_block, self.embed_y.W)
 
             # Calculate Loss, Accuracy, Perplexity
-            y_out_block = y_in_block
             concat_y_out_block = y_out_block.reshape((batch * y_length))
             loss = F.softmax_cross_entropy(
                 concat_pred_block, concat_y_out_block, reduce='mean')
