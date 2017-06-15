@@ -187,12 +187,17 @@ def main():
         model.to_gpu(args.gpu)
 
     # Setup Optimizer
+    # TODO fix optimizer
+    """
+    # In fact, alpha is controled by Eq. (3)
     optimizer = chainer.optimizers.Adam(
-        alpha=args.unit ** (-0.5),
+        alpha=args.unit ** (-0.5) * 0.01,
         beta1=0.9,
         beta2=0.98,
         eps=1e-9
     )
+    """
+    optimizer = chainer.optimizers.MomentumSGD(0.0001)
     optimizer.setup(model)
 
     # Setup Trainer
@@ -208,8 +213,9 @@ def main():
 
     trainer = training.Trainer(updater, (args.epoch, 'epoch'), out=args.out)
 
+    # TODO lengthen this interval
     # If you want to change a logging interval, change this number
-    log_trigger = (min(1000, iter_per_epoch // 2), 'iteration')
+    log_trigger = (min(10, iter_per_epoch // 2), 'iteration')
 
     def floor_step(trigger):
         floored = trigger[0] - trigger[0] % log_trigger[0]
@@ -230,11 +236,14 @@ def main():
     evaluator.default_name = 'val'
     trainer.extend(evaluator, trigger=eval_trigger)
     trainer.extend(extensions.observe_lr(), trigger=eval_trigger)
+    # TODO restore this
     # Only if a model gets best validation score,
     # save the model
+    """
     trainer.extend(extensions.snapshot_object(
         model, 'model_iter_{.updater.iteration}.npz'),
         trigger=record_trigger)
+    """
 
     def translate_one(source, target):
         words = europal.split_sentence(source)
@@ -266,13 +275,15 @@ def main():
     trainer.extend(
         translate,
         trigger=(min(200, iter_per_epoch), 'iteration'))
+    # TODO restore this
+    """
     # Calculate BLEU every half epoch
     trainer.extend(
         CalculateBleu(
             model, test_data, 'val/main/bleu',
             device=args.gpu, batch=args.batchsize // 4),
         trigger=floor_step((iter_per_epoch // 2, 'iteration')))
-
+    """
     # Log
     trainer.extend(extensions.LogReport(trigger=log_trigger),
                    trigger=log_trigger)
