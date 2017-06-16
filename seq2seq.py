@@ -17,7 +17,8 @@ from chainer.training import extensions
 
 import europal
 import net
-from subfuncs import FailMinValueTrigger
+
+from subfuncs import VaswaniRule
 
 
 def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
@@ -187,17 +188,12 @@ def main():
         model.to_gpu(args.gpu)
 
     # Setup Optimizer
-    # TODO fix optimizer
-    """
-    # In fact, alpha is controled by Eq. (3)
     optimizer = chainer.optimizers.Adam(
-        alpha=args.unit ** (-0.5) * 0.01,
+        alpha=args.unit ** (-0.5),
         beta1=0.9,
         beta2=0.98,
         eps=1e-9
     )
-    """
-    optimizer = chainer.optimizers.MomentumSGD(0.0001)
     optimizer.setup(model)
 
     # Setup Trainer
@@ -225,7 +221,6 @@ def main():
 
     # Validation every half epoch
     eval_trigger = floor_step((iter_per_epoch // 2, 'iteration'))
-    fail_trigger = FailMinValueTrigger('val/main/perp', eval_trigger)
     record_trigger = training.triggers.MinValueTrigger(
         'val/main/perp', eval_trigger)
 
@@ -235,15 +230,19 @@ def main():
         device=args.gpu)
     evaluator.default_name = 'val'
     trainer.extend(evaluator, trigger=eval_trigger)
-    trainer.extend(extensions.observe_lr(), trigger=eval_trigger)
-    # TODO restore this
+
+    # Use Vaswan's magical rule of learning rate (Eq. 3 in the paper)
+    trainer.extend(VaswaniRule('alpha', d=args.unit, warmup_steps=4000),
+                   trigger=(1, 'iteration'))
+
+    trainer.extend(extensions.observe_lr(observation_key='alpha'),
+                   trigger=(1, 'iteration'))
+
     # Only if a model gets best validation score,
     # save the model
-    """
     trainer.extend(extensions.snapshot_object(
         model, 'model_iter_{.updater.iteration}.npz'),
         trigger=record_trigger)
-    """
 
     def translate_one(source, target):
         words = europal.split_sentence(source)
@@ -293,7 +292,7 @@ def main():
          'main/perp', 'val/main/perp',
          'main/acc', 'val/main/acc',
          'val/main/bleu',
-         'lr',
+         'alpha',
          'elapsed_time']),
         trigger=log_trigger)
 
