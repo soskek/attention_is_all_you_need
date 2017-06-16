@@ -211,7 +211,7 @@ def main():
 
     # TODO lengthen this interval
     # If you want to change a logging interval, change this number
-    log_trigger = (min(10, iter_per_epoch // 2), 'iteration')
+    log_trigger = (min(100, iter_per_epoch // 2), 'iteration')
 
     def floor_step(trigger):
         floored = trigger[0] - trigger[0] % log_trigger[0]
@@ -274,15 +274,14 @@ def main():
     trainer.extend(
         translate,
         trigger=(min(200, iter_per_epoch), 'iteration'))
-    # TODO restore this
-    """
+
     # Calculate BLEU every half epoch
     trainer.extend(
         CalculateBleu(
             model, test_data, 'val/main/bleu',
             device=args.gpu, batch=args.batchsize // 4),
         trigger=floor_step((iter_per_epoch // 2, 'iteration')))
-    """
+
     # Log
     trainer.extend(extensions.LogReport(trigger=log_trigger),
                    trigger=log_trigger)
