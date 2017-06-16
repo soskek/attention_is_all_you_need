@@ -33,6 +33,7 @@ class AttentionLayer(chainer.Chain):
             W_Q=L.Linear(n_units, n_units, nobias=True),
             W_K=L.Linear(n_units, n_units, nobias=True),
             W_V=L.Linear(n_units, n_units, nobias=True),
+            FinishingLayer=L.Linear(n_units, n_units),
         )
         self.h = h
         self.dropout = dropout
@@ -107,6 +108,7 @@ class AttentionLayer(chainer.Chain):
             q=(b, units, n_querys), k=(b, units, n_keys),
             m=(b, n_querys, n_keys)
         """
+        return self.batched_children__call__(x, z, mask)
 
         query = seq_func(self.W_Q, x)
         key = seq_func(self.W_K, z)
@@ -150,6 +152,7 @@ class AttentionLayer(chainer.Chain):
             c = F.sum(pre_c, axis=3)  # (b, units // h, n_querys)
             c_list.append(c)
         c = F.concat(c_list, axis=1)
+        c = seq_func(self.FinishingLayer, c)
         return c
 
 
@@ -348,7 +351,7 @@ class Seq2seq(chainer.Chain):
             reporter.report({'loss': loss.data,
                              'acc': accuracy.data,
                              'perp': perp}, self)
-            return loss * (concat_y_out_block >= 0).sum() / batch
+            return loss
 
     def translate(self, x_block, max_length=50):
         # TODO: efficient inference by re-using convolution result
