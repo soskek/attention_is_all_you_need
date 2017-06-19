@@ -149,6 +149,8 @@ def main():
     parser.add_argument('--target-vocab', type=int, default=40000,
                         help='Vocabulary size of target language')
     parser.add_argument('--no-bleu', '-no-bleu', action='store_true')
+    parser.add_argument('--use-label-smoothing', action='store_true')
+    parser.add_argument('--attend-one-by-one', action='store_true')
     args = parser.parse_args()
     print(json.dumps(args.__dict__, indent=4))
 
@@ -187,7 +189,9 @@ def main():
         args.layer,
         min(len(source_ids), len(source_words)),
         min(len(target_ids), len(target_words)),
-        args.unit)
+        args.unit,
+        use_label_smoothing=args.use_label_smoothing,
+        attend_one_by_one=args.attend_one_by_one)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
