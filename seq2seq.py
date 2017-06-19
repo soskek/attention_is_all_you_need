@@ -49,6 +49,7 @@ def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
     y_block = convert.concat_examples(y_seqs, device, padding=-1)
     xp = cuda.get_array_module(x_block)
 
+    # The paper did not mention eos
     # add eos
     x_block = xp.pad(x_block, ((0, 0), (0, 1)),
                      'constant', constant_values=-1)
@@ -147,6 +148,7 @@ def main():
                         help='Vocabulary size of source language')
     parser.add_argument('--target-vocab', type=int, default=40000,
                         help='Vocabulary size of target language')
+    parser.add_argument('--no-bleu', '-no-bleu', action='store_true')
     args = parser.parse_args()
     print(json.dumps(args.__dict__, indent=4))
 
@@ -182,7 +184,10 @@ def main():
 
     # Define Model
     model = net.Seq2seq(
-        args.layer, len(source_ids), len(target_ids), args.unit)
+        args.layer,
+        min(len(source_ids), len(source_words)),
+        min(len(target_ids), len(target_words)),
+        args.unit)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
@@ -276,11 +281,12 @@ def main():
         trigger=(min(200, iter_per_epoch), 'iteration'))
 
     # Calculate BLEU every half epoch
-    trainer.extend(
-        CalculateBleu(
-            model, test_data, 'val/main/bleu',
-            device=args.gpu, batch=args.batchsize // 4),
-        trigger=floor_step((iter_per_epoch // 2, 'iteration')))
+    if not args.no_bleu:
+        trainer.extend(
+            CalculateBleu(
+                model, test_data, 'val/main/bleu',
+                device=args.gpu, batch=args.batchsize // 4),
+            trigger=floor_step((iter_per_epoch // 2, 'iteration')))
 
     # Log
     trainer.extend(extensions.LogReport(trigger=log_trigger),

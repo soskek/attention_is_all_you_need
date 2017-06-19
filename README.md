@@ -1,9 +1,8 @@
 # [WIP] Transformer - Attention Is All You Need
 [Chainer](https://github.com/chainer/chainer/)-based Python implementation of Transformer, an attention-based seq2seq model without convolution and recurrence.
-This is WIP due to lack of confirmation of trained model performance.
+This is WIP. Currenty, I have not found good result of training in large dataset. Currently this code may include bug or a critical difference from the original model/training.
 
 This repository does not aim for complete validation of results in the paper, so I have not eagerly confirmed validity of performance. But, I expect my implementation is almost compatible with a model described in the paper. Some differences where I am aware is as follows:  
-- Label smoothing. This is not yet added, but will be added soon.
 - Optimization/training strategy. Detailed information about batchsize, parameter initialization, etc. is unclear in the paper.
 - Vocabulary set, dataset, preprocessing and evaluation. This repo uses a common word-based tokenization, although the paper uses byte-pair encoding. Size of token set also differs. Evaluation (validation) is little unfair and incompatible with one in the paper, e.g., even validation set replaces unknown words to a single "unk" token.
 - Beam search. This is not yet added.
