@@ -190,6 +190,9 @@ def main():
         min(len(source_ids), len(source_words)),
         min(len(target_ids), len(target_words)),
         args.unit,
+        h=8,
+        dropout=0.1,
+        max_length=500,
         use_label_smoothing=args.use_label_smoothing,
         attend_one_by_one=args.attend_one_by_one)
     if args.gpu >= 0:
