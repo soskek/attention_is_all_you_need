@@ -1,16 +1,17 @@
-# [WIP] Transformer - Attention Is All You Need
+# Transformer - Attention Is All You Need
 [Chainer](https://github.com/chainer/chainer/)-based Python implementation of Transformer, an attention-based seq2seq model without convolution and recurrence.
-This is WIP. I have not found good result of training in large dataset. This code may include bug or a critical difference from the original model/training now.
+This is WIP, but works. It takes much time to converge.
 
 This repository does not aim for complete validation of results in the paper, so I have not eagerly confirmed validity of performance. But, I expect my implementation is almost compatible with a model described in the paper. Some differences where I am aware is as follows:  
 - Optimization/training strategy. Detailed information about batchsize, parameter initialization, etc. is unclear in the paper.
 - Vocabulary set, dataset, preprocessing and evaluation. This repo uses a common word-based tokenization, although the paper uses byte-pair encoding. Size of token set also differs. Evaluation (validation) is little unfair and incompatible with one in the paper, e.g., even validation set replaces unknown words to a single "unk" token.
 - Beam search. This is not yet added.
 - Model size. The setting of a model in this repo is one of "base model" in the paper, although you can modify some lines for using "big model".
+- I follow some settings used in [tensor2tensor repository](https://github.com/tensorflow/tensor2tensor/tree/master/tensor2tensor/models), which includes Transformer but does not say it is the setting in the paper.
 
 This is derived from my [convolutional seq2seq](https://github.com/soskek/convolutional_seq2seq) repo, which is derived from Chainer's official [seq2seq example](https://github.com/chainer/chainer/tree/seq2seq-europal/examples/seq2seq).
 
-See [Attention Is All You Need](https://arxiv.org/abs/1706.03762), Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin, arxiv, 2017.
+See "[Attention Is All You Need](https://arxiv.org/abs/1706.03762)", Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin, arxiv, 2017.
 
 ## Requirement
 

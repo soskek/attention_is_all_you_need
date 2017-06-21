@@ -10,7 +10,8 @@ from chainer import reporter
 
 from seq2seq import source_pad_concat_convert
 
-linear_init = chainer.initializers.GlorotNormal()
+# linear_init = chainer.initializers.GlorotNormal()
+linear_init = chainer.initializers.LeCunUniform()
 
 
 def sentence_block_embed(embed, x):
@@ -33,28 +34,67 @@ def seq_func(func, x, reconstruct_shape=True):
     return e
 
 
+class LayerNormalizationSentence(L.LayerNormalization):
+    def __init__(self, *args, **kwargs):
+        super(LayerNormalizationSentence, self).__init__(*args, **kwargs)
+
+    def __call__(self, x):
+        y = seq_func(super(LayerNormalizationSentence, self).__call__, x)
+        return y
+
+
+class ConvolutionSentence(L.Convolution2D):
+    def __init__(self, n_channels, out_channels,
+                 ksize=1, stride=1, pad=0, nobias=False,
+                 initialW=None, initial_bias=None,
+                 squeeze=True):
+        super(ConvolutionSentence, self).__init__(
+            n_channels, out_channels,
+            ksize, stride, pad, nobias,
+            initialW, initial_bias)
+        self.squeeze = squeeze
+
+    def __call__(self, x):
+        if x.ndim == 3:
+            x = x[:, :, :, None]
+        y = super(ConvolutionSentence, self).__call__(x)
+        if self.squeeze:
+            y = F.squeeze(y, axis=3)
+        return y
+
+
 class AttentionLayer(chainer.Chain):
-    def __init__(self, n_units, h=8, dropout=0.1):
+    def __init__(self, n_units, h=8, dropout=0.1, self_attention=True):
         super(AttentionLayer, self).__init__()
         with self.init_scope():
-            self.W_Q = L.Linear(n_units, n_units, nobias=True,
-                                initialW=linear_init)
-            self.W_K = L.Linear(n_units, n_units, nobias=True,
-                                initialW=linear_init)
-            self.W_V = L.Linear(n_units, n_units, nobias=True,
-                                initialW=linear_init)
-            self.FinishingLinearLayer = L.Linear(n_units, n_units,
-                                                 initialW=linear_init)
+            if self_attention:
+                self.W_QKV = ConvolutionSentence(
+                    n_units, n_units * 3, nobias=True,
+                    initialW=linear_init)
+            else:
+                self.W_Q = ConvolutionSentence(
+                    n_units, n_units, nobias=True,
+                    initialW=linear_init)
+                self.W_KV = ConvolutionSentence(
+                    n_units, n_units * 2, nobias=True,
+                    initialW=linear_init)
+            self.FinishingLinearLayer = ConvolutionSentence(
+                n_units, n_units, nobias=True,
+                initialW=linear_init)
         self.h = h
         self.scale_score = 1. / (n_units // h) ** 0.5
         self.dropout = dropout
+        self.self_attention = self_attention
 
-    def __call__(self, x, z, mask):
+    def __call__(self, x, z=None, mask=None):
         xp = self.xp
         h = self.h
-        query = seq_func(self.W_Q, x)
-        key = seq_func(self.W_K, z)
-        value = seq_func(self.W_V, z)
+
+        if self.self_attention:
+            query, key, value = F.split_axis(self.W_QKV(x), 3, axis=1)
+        else:
+            query = self.W_Q(x)
+            key, value = F.split_axis(self.W_KV(z), 2, axis=1)
         batch, n_units, n_querys = query.shape
 
         # Calculate Attention Scores with Mask for Zero-padded Areas
@@ -81,7 +121,7 @@ class AttentionLayer(chainer.Chain):
             a[:, None], pseudo_batch_value[:, :, None])
         multi_c = F.sum(a * pseudo_batch_value, axis=3)
         concat_c = F.concat(F.split_axis(multi_c, self.h, axis=0), axis=1)
-        lineared_c = seq_func(self.FinishingLinearLayer, concat_c)
+        lineared_c = self.FinishingLinearLayer(concat_c)
         return lineared_c
 
 
@@ -94,18 +134,18 @@ class AttentionLayer(chainer.Chain):
 class FeedForwardLayer(chainer.Chain):
     def __init__(self, n_units):
         super(FeedForwardLayer, self).__init__()
-        n_inner_units = n_units * 2
+        n_inner_units = n_units * 4
         with self.init_scope():
-            self.W_1 = L.Linear(n_units, n_inner_units,
-                                initialW=linear_init)
-            self.W_2 = L.Linear(n_inner_units, n_units,
-                                initialW=linear_init)
-            self.act = F.leaky_relu
+            self.W_1 = ConvolutionSentence(n_units, n_inner_units,
+                                           initialW=linear_init)
+            self.W_2 = ConvolutionSentence(n_inner_units, n_units,
+                                           initialW=linear_init)
+            self.act = F.relu
 
     def __call__(self, e):
-        e = seq_func(self.W_1, e)
+        e = self.W_1(e)
         e = self.act(e)
-        e = seq_func(self.W_2, e)
+        e = self.W_2(e)
         return e
 
 
@@ -115,18 +155,18 @@ class EncoderLayer(chainer.Chain):
         with self.init_scope():
             self.SelfAttention = AttentionLayer(n_units, h)
             self.FeedForward = FeedForwardLayer(n_units)
-            self.LN_1 = L.LayerNormalization(n_units, eps=1e-9)
-            self.LN_2 = L.LayerNormalization(n_units, eps=1e-9)
+            self.LN_1 = LayerNormalizationSentence(n_units, eps=1e-9)
+            self.LN_2 = LayerNormalizationSentence(n_units, eps=1e-9)
         self.dropout = dropout
 
     def __call__(self, e, xx_mask):
         sub = self.SelfAttention(e, e, xx_mask)
         e = e + F.dropout(sub, self.dropout)
-        e = seq_func(self.LN_1, e)
+        e = self.LN_1(e)
 
         sub = self.FeedForward(e)
         e = e + F.dropout(sub, self.dropout)
-        e = seq_func(self.LN_2, e)
+        e = self.LN_2(e)
         return e
 
 
@@ -134,26 +174,27 @@ class DecoderLayer(chainer.Chain):
     def __init__(self, n_units, h=8, dropout=0.1):
         super(DecoderLayer, self).__init__()
         with self.init_scope():
-            self.SourceAttention = AttentionLayer(n_units, h)
             self.SelfAttention = AttentionLayer(n_units, h)
+            self.SourceAttention = AttentionLayer(n_units, h,
+                                                  self_attention=False)
             self.FeedForward = FeedForwardLayer(n_units)
-            self.LN_1 = L.LayerNormalization(n_units, eps=1e-9)
-            self.LN_2 = L.LayerNormalization(n_units, eps=1e-9)
-            self.LN_3 = L.LayerNormalization(n_units, eps=1e-9)
+            self.LN_1 = LayerNormalizationSentence(n_units, eps=1e-9)
+            self.LN_2 = LayerNormalizationSentence(n_units, eps=1e-9)
+            self.LN_3 = LayerNormalizationSentence(n_units, eps=1e-9)
         self.dropout = dropout
 
     def __call__(self, e, s, xy_mask, yy_mask):
         sub = self.SelfAttention(e, e, yy_mask)
         e = e + F.dropout(sub, self.dropout)
-        e = seq_func(self.LN_1, e)
+        e = self.LN_1(e)
 
         sub = self.SourceAttention(e, s, xy_mask)
         e = e + F.dropout(sub, self.dropout)
-        e = seq_func(self.LN_2, e)
+        e = self.LN_2(e)
 
         sub = self.FeedForward(e)
         e = e + F.dropout(sub, self.dropout)
-        e = seq_func(self.LN_3, e)
+        e = self.LN_3(e)
         return e
 
 
@@ -168,16 +209,13 @@ class Encoder(chainer.Chain):
             self.layer_names.append(name)
 
     def __call__(self, e, xx_mask):
-        outputs = []
         for name in self.layer_names:
             e = getattr(self, name)(e, xx_mask)
-            outputs.append(e)
-        return outputs
+        return e
 
 
 class Decoder(chainer.Chain):
-    def __init__(self, n_layers, n_units,
-                 h=8, dropout=0.1, attend_one_by_one=False):
+    def __init__(self, n_layers, n_units, h=8, dropout=0.1):
         super(Decoder, self).__init__()
         self.layer_names = []
         for i in range(1, n_layers + 1):
@@ -185,17 +223,13 @@ class Decoder(chainer.Chain):
             layer = DecoderLayer(n_units, h, dropout)
             self.add_link(name, layer)
             self.layer_names.append(name)
-        self.attend_one_by_one = attend_one_by_one
 
-    def __call__(self, e, sources, xy_mask, yy_mask):
+    def __call__(self, e, source, xy_mask, yy_mask):
         # Attention target is the final output of encoder,
         # or each output of each layer in it?
         # It depends on self.attend_one_by_one
-        for name, source in zip(self.layer_names, sources):
-            if self.attend_one_by_one:
-                e = getattr(self, name)(e, source, xy_mask, yy_mask)
-            else:
-                e = getattr(self, name)(e, sources[-1], xy_mask, yy_mask)
+        for name in self.layer_names:
+            e = getattr(self, name)(e, source, xy_mask, yy_mask)
         return e
 
 
@@ -203,7 +237,7 @@ class Seq2seq(chainer.Chain):
 
     def __init__(self, n_layers, n_source_vocab, n_target_vocab, n_units,
                  h=8, dropout=0.1, max_length=500,
-                 use_label_smoothing=False, attend_one_by_one=False,
+                 use_label_smoothing=False,
                  embed_position=False):
         super(Seq2seq, self).__init__()
         with self.init_scope():
@@ -212,8 +246,7 @@ class Seq2seq(chainer.Chain):
             self.embed_y = L.EmbedID(n_target_vocab, n_units, ignore_label=-1,
                                      initialW=linear_init)
             self.encoder = Encoder(n_layers, n_units, h, dropout)
-            self.decoder = Decoder(n_layers, n_units, h, dropout,
-                                   attend_one_by_one)
+            self.decoder = Decoder(n_layers, n_units, h, dropout)
             if embed_position:
                 self.embed_pos = L.EmbedID(max_length, n_units,
                                            ignore_label=-1)
@@ -274,29 +307,31 @@ class Seq2seq(chainer.Chain):
         # Output (all together at once for efficiency)
         concat_logit_block = seq_func(self.output, h_block,
                                       reconstruct_shape=False)
-        log_prob = F.log_softmax(concat_logit_block)
-        rebatch, _ = log_prob.shape
-
+        rebatch, _ = concat_logit_block.shape
         # Make target
         concat_t_block = t_block.reshape((rebatch))
         ignore_mask = (concat_t_block >= 0)
-        broad_ignore_mask = self.xp.broadcast_to(
-            ignore_mask[:, None],
-            concat_logit_block.shape)
         n_token = ignore_mask.sum()
-        normalizer = batch  # n_token or batch or 1
+        normalizer = n_token  # n_token or batch or 1
 
-        # Calculate Loss, Accuracy, Perplexity
-        pre_loss = ignore_mask * \
-            log_prob[self.xp.arange(rebatch), concat_t_block]
-        loss = - F.sum(pre_loss) / normalizer
+        if not self.use_label_smoothing:
+            loss = F.softmax_cross_entropy(concat_logit_block, concat_t_block)
+            loss = loss * n_token / normalizer
+        else:
+            log_prob = F.log_softmax(concat_logit_block)
+            broad_ignore_mask = self.xp.broadcast_to(
+                ignore_mask[:, None],
+                concat_logit_block.shape)
+            pre_loss = ignore_mask * \
+                log_prob[self.xp.arange(rebatch), concat_t_block]
+            loss = - F.sum(pre_loss) / normalizer
+
         accuracy = F.accuracy(
             concat_logit_block, concat_t_block, ignore_label=-1)
-
         perp = self.xp.exp(loss.data * normalizer / n_token)
 
         # Report the Values
-        reporter.report({'loss': loss.data,
+        reporter.report({'loss': loss.data * normalizer / n_token,
                          'acc': accuracy.data,
                          'perp': perp}, self)
 

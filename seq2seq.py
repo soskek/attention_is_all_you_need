@@ -21,7 +21,7 @@ import net
 from subfuncs import VaswaniRule
 
 
-def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
+def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0, bos_id=2):
     """
     Args:
         xy_batch (list of tuple of two numpy.ndarray-s or cupy.ndarray-s):
@@ -62,7 +62,7 @@ def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0):
         y_out_block[i_batch, len(seq)] = eos_id
 
     y_in_block = xp.pad(y_block, ((0, 0), (1, 0)),
-                        'constant', constant_values=eos_id)
+                        'constant', constant_values=bos_id)
     return (x_block, y_in_block, y_out_block)
 
 
@@ -150,17 +150,16 @@ def main():
                         help='Vocabulary size of target language')
     parser.add_argument('--no-bleu', '-no-bleu', action='store_true')
     parser.add_argument('--use-label-smoothing', action='store_true')
-    parser.add_argument('--attend-one-by-one', action='store_true')
     args = parser.parse_args()
     print(json.dumps(args.__dict__, indent=4))
 
     # Check file
     en_path = os.path.join(args.input, args.source)
-    source_vocab = ['<eos>', '<unk>'] + \
+    source_vocab = ['<eos>', '<unk>', '<bos>'] + \
         europal.count_words(en_path, args.source_vocab)
     source_data = europal.make_dataset(en_path, source_vocab)
     fr_path = os.path.join(args.input, args.target)
-    target_vocab = ['<eos>', '<unk>'] + \
+    target_vocab = ['<eos>', '<unk>', '<bos>'] + \
         europal.count_words(fr_path, args.target_vocab)
     target_data = europal.make_dataset(fr_path, target_vocab)
     assert len(source_data) == len(target_data)
@@ -193,8 +192,7 @@ def main():
         h=8,
         dropout=0.1,
         max_length=500,
-        use_label_smoothing=args.use_label_smoothing,
-        attend_one_by_one=args.attend_one_by_one)
+        use_label_smoothing=args.use_label_smoothing)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
