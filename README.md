@@ -7,7 +7,7 @@ This repository does not aim for complete validation of results in the paper, so
 - Vocabulary set, dataset, preprocessing and evaluation. This repo uses a common word-based tokenization, although the paper uses byte-pair encoding. Size of token set also differs. Evaluation (validation) is little unfair and incompatible with one in the paper, e.g., even validation set replaces unknown words to a single "unk" token.
 - Beam search. This is not yet added.
 - Model size. The setting of a model in this repo is one of "base model" in the paper, although you can modify some lines for using "big model".
-- I follow some settings used in [tensor2tensor repository](https://github.com/tensorflow/tensor2tensor/tree/master/tensor2tensor/models), which includes Transformer but does not say it is the setting in the paper.
+- I follow some settings used in [tensor2tensor repository](https://github.com/tensorflow/tensor2tensor/tree/master/tensor2tensor/models), which includes a Transformer model.
 
 This is derived from my [convolutional seq2seq](https://github.com/soskek/convolutional_seq2seq) repo, which is derived from Chainer's official [seq2seq example](https://github.com/chainer/chainer/tree/seq2seq-europal/examples/seq2seq).
 
