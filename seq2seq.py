@@ -184,7 +184,7 @@ def main():
     source_words = {i: w for w, i in source_ids.items()}
 
     # Define Model
-    model = net.Seq2seq(
+    model = net.Transformer(
         args.layer,
         min(len(source_ids), len(source_words)),
         min(len(target_ids), len(target_words)),

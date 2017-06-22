@@ -15,6 +15,14 @@ linear_init = chainer.initializers.LeCunUniform()
 
 
 def sentence_block_embed(embed, x):
+    """ Change implicitly embed_id function's target to ndim=2
+
+    Apply embed_id for array of ndim 2,
+    shape (batchsize, sentence_length),
+    instead for array of ndim 1.
+
+    """
+
     batch, length = x.shape
     e = embed(x.reshape((batch * length, )))
     # (batch * length, units)
@@ -24,6 +32,14 @@ def sentence_block_embed(embed, x):
 
 
 def seq_func(func, x, reconstruct_shape=True):
+    """ Change implicitly function's target to ndim=3
+
+    Apply a given function for array of ndim 3,
+    shape (batchsize, dimension, sentence_length),
+    instead for array of ndim 2.
+
+    """
+
     batch, units, length = x.shape
     e = F.transpose(x, (0, 2, 1)).reshape(batch * length, units)
     e = func(e)
@@ -35,6 +51,14 @@ def seq_func(func, x, reconstruct_shape=True):
 
 
 class LayerNormalizationSentence(L.LayerNormalization):
+
+    """ Position-wise Linear Layer for Sentence Block
+
+    Position-wise layer-normalization layer for array of shape
+    (batchsize, dimension, sentence_length).
+
+    """
+
     def __init__(self, *args, **kwargs):
         super(LayerNormalizationSentence, self).__init__(*args, **kwargs)
 
@@ -44,28 +68,52 @@ class LayerNormalizationSentence(L.LayerNormalization):
 
 
 class ConvolutionSentence(L.Convolution2D):
-    def __init__(self, n_channels, out_channels,
+
+    """ Position-wise Linear Layer for Sentence Block
+
+    Position-wise linear layer for array of shape
+    (batchsize, dimension, sentence_length)
+    can be implemented a convolution layer.
+
+    """
+
+    def __init__(self, in_channels, out_channels,
                  ksize=1, stride=1, pad=0, nobias=False,
-                 initialW=None, initial_bias=None,
-                 squeeze=True):
+                 initialW=None, initial_bias=None):
         super(ConvolutionSentence, self).__init__(
-            n_channels, out_channels,
+            in_channels, out_channels,
             ksize, stride, pad, nobias,
             initialW, initial_bias)
-        self.squeeze = squeeze
 
     def __call__(self, x):
-        if x.ndim == 3:
-            x = x[:, :, :, None]
+        """Applies the linear layer.
+
+        Args:
+            x (~chainer.Variable): Batch of input vector block. Its shape is
+                (batchsize, in_channels, sentence_length).
+
+        Returns:
+            ~chainer.Variable: Output of the linear layer. Its shape is
+                (batchsize, out_channels, sentence_length).
+
+        """
+        x = F.expand_dims(x, axis=3)
         y = super(ConvolutionSentence, self).__call__(x)
-        if self.squeeze:
-            y = F.squeeze(y, axis=3)
+        y = F.squeeze(y, axis=3)
         return y
 
 
-class AttentionLayer(chainer.Chain):
+class MultiHeadAttention(chainer.Chain):
+
+    """ Multi Head Attention Layer for Sentence Blocks
+
+    For batch computation efficiency, dot product to calculate query-key
+    scores is performed all heads together.
+
+    """
+
     def __init__(self, n_units, h=8, dropout=0.1, self_attention=True):
-        super(AttentionLayer, self).__init__()
+        super(MultiHeadAttention, self).__init__()
         with self.init_scope():
             if self_attention:
                 self.W_QKV = ConvolutionSentence(
@@ -128,7 +176,6 @@ class AttentionLayer(chainer.Chain):
 # Section 3.3 says the inner-layer has dimension 2048.
 # But, Table 4 says d_{ff} = 1024 (for "base model").
 # d_{ff}'s denotation is unclear, but it seems to denote the same one.
-# So, we use 1024.
 
 
 class FeedForwardLayer(chainer.Chain):
@@ -153,7 +200,7 @@ class EncoderLayer(chainer.Chain):
     def __init__(self, n_units, h=8, dropout=0.1):
         super(EncoderLayer, self).__init__()
         with self.init_scope():
-            self.SelfAttention = AttentionLayer(n_units, h)
+            self.SelfAttention = MultiHeadAttention(n_units, h)
             self.FeedForward = FeedForwardLayer(n_units)
             self.LN_1 = LayerNormalizationSentence(n_units, eps=1e-9)
             self.LN_2 = LayerNormalizationSentence(n_units, eps=1e-9)
@@ -174,9 +221,9 @@ class DecoderLayer(chainer.Chain):
     def __init__(self, n_units, h=8, dropout=0.1):
         super(DecoderLayer, self).__init__()
         with self.init_scope():
-            self.SelfAttention = AttentionLayer(n_units, h)
-            self.SourceAttention = AttentionLayer(n_units, h,
-                                                  self_attention=False)
+            self.SelfAttention = MultiHeadAttention(n_units, h)
+            self.SourceAttention = MultiHeadAttention(n_units, h,
+                                                      self_attention=False)
             self.FeedForward = FeedForwardLayer(n_units)
             self.LN_1 = LayerNormalizationSentence(n_units, eps=1e-9)
             self.LN_2 = LayerNormalizationSentence(n_units, eps=1e-9)
@@ -233,13 +280,13 @@ class Decoder(chainer.Chain):
         return e
 
 
-class Seq2seq(chainer.Chain):
+class Transformer(chainer.Chain):
 
     def __init__(self, n_layers, n_source_vocab, n_target_vocab, n_units,
                  h=8, dropout=0.1, max_length=500,
                  use_label_smoothing=False,
                  embed_position=False):
-        super(Seq2seq, self).__init__()
+        super(Transformer, self).__init__()
         with self.init_scope():
             self.embed_x = L.EmbedID(n_source_vocab, n_units, ignore_label=-1,
                                      initialW=linear_init)
