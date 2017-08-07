@@ -55,6 +55,8 @@ def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0, bos_id=2):
                      'constant', constant_values=-1)
     for i_batch, seq in enumerate(x_seqs):
         x_block[i_batch, len(seq)] = eos_id
+    x_block = xp.pad(x_block, ((0, 0), (1, 0)),
+                     'constant', constant_values=bos_id)
 
     y_out_block = xp.pad(y_block, ((0, 0), (0, 1)),
                          'constant', constant_values=-1)
@@ -66,7 +68,7 @@ def seq2seq_pad_concat_convert(xy_batch, device, eos_id=0, bos_id=2):
     return (x_block, y_in_block, y_out_block)
 
 
-def source_pad_concat_convert(x_seqs, device, eos_id=0):
+def source_pad_concat_convert(x_seqs, device, eos_id=0, bos_id=2):
     x_block = convert.concat_examples(x_seqs, device, padding=-1)
     xp = cuda.get_array_module(x_block)
 
@@ -75,6 +77,8 @@ def source_pad_concat_convert(x_seqs, device, eos_id=0):
                      'constant', constant_values=-1)
     for i_batch, seq in enumerate(x_seqs):
         x_block[i_batch, len(seq)] = eos_id
+    x_block = xp.pad(x_block, ((0, 0), (1, 0)),
+                     'constant', constant_values=bos_id)
     return x_block
 
 
@@ -105,7 +109,9 @@ class CalculateBleu(chainer.training.Extension):
                     sources = [
                         chainer.dataset.to_device(self.device, x) for x in sources]
                     ys = [y.tolist()
-                          for y in self.model.translate(sources, self.max_length)]
+                          for y in self.model.translate(
+                        sources, self.max_length, beam=False)]
+                    # greedy generation for efficiency
                     hypotheses.extend(ys)
 
         bleu = bleu_score.corpus_bleu(
@@ -118,7 +124,7 @@ class CalculateBleu(chainer.training.Extension):
 def main():
     parser = argparse.ArgumentParser(
         description='Chainer example: convolutional seq2seq')
-    parser.add_argument('--batchsize', '-b', type=int, default=32,
+    parser.add_argument('--batchsize', '-b', type=int, default=48,
                         help='Number of images in each mini-batch')
     parser.add_argument('--epoch', '-e', type=int, default=100,
                         help='Number of sweeps over the dataset to train')
@@ -128,6 +134,10 @@ def main():
                         help='Number of units')
     parser.add_argument('--layer', '-l', type=int, default=6,
                         help='Number of layers')
+    parser.add_argument('--head', type=int, default=8,
+                        help='Number of heads in attention mechanism')
+    parser.add_argument('--dropout', '-d', type=float, default=0.1,
+                        help='Dropout rate')
     parser.add_argument('--input', '-i', type=str, default='./',
                         help='Input directory')
     parser.add_argument('--source', '-s', type=str,
@@ -148,8 +158,15 @@ def main():
                         help='Vocabulary size of source language')
     parser.add_argument('--target-vocab', type=int, default=40000,
                         help='Vocabulary size of target language')
-    parser.add_argument('--no-bleu', '-no-bleu', action='store_true')
-    parser.add_argument('--use-label-smoothing', action='store_true')
+    parser.add_argument('--no-bleu', '-no-bleu', action='store_true',
+                        help='Skip BLEU calculation')
+    parser.add_argument('--use-label-smoothing', action='store_true',
+                        help='Use label smoothing for cross entropy')
+    parser.add_argument('--embed-position', action='store_true',
+                        help='Use position embedding rather than sinusoid')
+    parser.add_argument('--use-fixed-lr', action='store_true',
+                        help='Use fixed learning rate rather than the ' +
+                             'annealing proposed in the paper')
     args = parser.parse_args()
     print(json.dumps(args.__dict__, indent=4))
 
@@ -189,17 +206,18 @@ def main():
         min(len(source_ids), len(source_words)),
         min(len(target_ids), len(target_words)),
         args.unit,
-        h=8,
-        dropout=0.1,
+        h=args.head,
+        dropout=args.dropout,
         max_length=500,
-        use_label_smoothing=args.use_label_smoothing)
+        use_label_smoothing=args.use_label_smoothing,
+        embed_position=args.embed_position)
     if args.gpu >= 0:
         chainer.cuda.get_device(args.gpu).use()
         model.to_gpu(args.gpu)
 
     # Setup Optimizer
     optimizer = chainer.optimizers.Adam(
-        alpha=args.unit ** (-0.5),
+        alpha=5e-5,
         beta1=0.9,
         beta2=0.98,
         eps=1e-9
@@ -219,9 +237,8 @@ def main():
 
     trainer = training.Trainer(updater, (args.epoch, 'epoch'), out=args.out)
 
-    # TODO lengthen this interval
     # If you want to change a logging interval, change this number
-    log_trigger = (min(100, iter_per_epoch // 2), 'iteration')
+    log_trigger = (min(200, iter_per_epoch // 2), 'iteration')
 
     def floor_step(trigger):
         floored = trigger[0] - trigger[0] % log_trigger[0]
@@ -236,22 +253,38 @@ def main():
 
     evaluator = extensions.Evaluator(
         test_iter, model,
-        converter=seq2seq_pad_concat_convert,
-        device=args.gpu)
+        converter=seq2seq_pad_concat_convert, device=args.gpu)
     evaluator.default_name = 'val'
     trainer.extend(evaluator, trigger=eval_trigger)
 
-    # Use Vaswan's magical rule of learning rate (Eq. 3 in the paper)
-    trainer.extend(VaswaniRule('alpha', d=args.unit, warmup_steps=4000),
-                   trigger=(1, 'iteration'))
+    # Use Vaswan's magical rule of learning rate(Eq. 3 in the paper)
+    # But, the hyperparamter in the paper seems to work well
+    # only with a large batchsize.
+    # If you run on popular setup (e.g. size=48 on 1 GPU),
+    # you may have to change the hyperparamter.
+    # I scaled learning rate by 0.5 consistently.
+    # ("scale" is always multiplied to learning rate.)
 
-    trainer.extend(extensions.observe_lr(observation_key='alpha'),
-                   trigger=(1, 'iteration'))
+    # If you use a shallow layer network (<=2),
+    # you may not have to change it from the paper setting.
+    if not args.use_fixed_lr:
+        trainer.extend(
+            # VaswaniRule('alpha', d=args.unit, warmup_steps=4000, scale=1.),
+            # VaswaniRule('alpha', d=args.unit, warmup_steps=32000, scale=1.),
+            VaswaniRule('alpha', d=args.unit, warmup_steps=4000, scale=0.5),
+            # VaswaniRule('alpha', d=args.unit, warmup_steps=16000, scale=1.),
+            trigger=(1, 'iteration'))
+    observe_alpha = extensions.observe_value(
+        'alpha',
+        lambda trainer: trainer.updater.get_optimizer('main').alpha)
+    trainer.extend(
+        observe_alpha,
+        trigger=(1, 'iteration'))
 
     # Only if a model gets best validation score,
-    # save the model
+    # save (overwrite) the model
     trainer.extend(extensions.snapshot_object(
-        model, 'model_iter_{.updater.iteration}.npz'),
+        model, 'best_model.npz'),
         trigger=record_trigger)
 
     def translate_one(source, target):
@@ -259,7 +292,7 @@ def main():
         print('# source : ' + ' '.join(words))
         x = model.xp.array(
             [source_ids.get(w, 1) for w in words], 'i')
-        ys = model.translate([x])[0]
+        ys = model.translate([x], beam=5)[0]
         words = [target_words[y] for y in ys]
         print('#  result : ' + ' '.join(words))
         print('#  expect : ' + target)

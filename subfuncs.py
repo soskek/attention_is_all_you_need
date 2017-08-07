@@ -23,9 +23,10 @@ class VaswaniRule(extension.Extension):
     """
 
     def __init__(self, attr, d, warmup_steps=4000,
-                 init=None, target=None, optimizer=None):
+                 init=None, target=None, optimizer=None,
+                 scale=1.):
         self._attr = attr
-        self._d_inv05 = d ** (-0.5)
+        self._d_inv05 = d ** (-0.5) * scale
         self._warmup_steps_inv15 = warmup_steps ** (-1.5)
         self._init = init
         self._target = target
