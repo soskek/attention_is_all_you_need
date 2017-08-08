@@ -51,7 +51,7 @@ Please see the others by `python train.py -h`.
 
 ## Note
 
-This repository does not aim for complete validation of results in the paper, so I have not eagerly confirmed validity of performance. But, I expect my implementation is almost compatible with a model described in the paper. Some differences where I am aware is as follows:  
+This repository does not aim for complete validation of results in the paper, so I have not eagerly confirmed validity of performance. But, I expect my implementation is almost compatible with a model described in the paper. Some differences where I am aware are as follows:  
 - Optimization/training strategy. Detailed information about batchsize, parameter initialization, etc. is unclear in the paper. Additionally, the learning rate proposed in the paper may work only with a large batchsize (e.g. 4000) for deep layer nets. I modified it by multiplying 0.5, though there is room for improvement. I also changed `relu` into `leaky relu` in feedforward net layers for easy gradient propagation.
 - Vocabulary set, dataset, preprocessing and evaluation. This repo uses a common word-based tokenization, although the paper uses byte-pair encoding. Size of token set also differs. Evaluation (validation) is little unfair and incompatible with one in the paper, e.g., even validation set replaces unknown words to a single "unk" token.
 - Beam search is unused in BLEU calculation.
