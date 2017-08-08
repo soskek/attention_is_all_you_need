@@ -2,23 +2,19 @@
 [Chainer](https://github.com/chainer/chainer/)-based Python implementation of Transformer, an attention-based seq2seq model without convolution and recurrence.  
 If you want to see the architecture, please see [net.py](https://github.com/soskek/attention_is_all_you_need/blob/master/net.py).
 
-This repository does not aim for complete validation of results in the paper, so I have not eagerly confirmed validity of performance. But, I expect my implementation is almost compatible with a model described in the paper. Some differences where I am aware is as follows:  
-- Optimization/training strategy. Detailed information about batchsize, parameter initialization, etc. is unclear in the paper. Additionally, the learning rate proposed in the paper may work only with a large batchsize (e.g. 4000) for deep layer nets. I modified it by multiplying 0.5, though there is room for improvement. I also changed `relu` into `leaky relu` in feedforward net layers for easy gradient propagation.
-- Vocabulary set, dataset, preprocessing and evaluation. This repo uses a common word-based tokenization, although the paper uses byte-pair encoding. Size of token set also differs. Evaluation (validation) is little unfair and incompatible with one in the paper, e.g., even validation set replaces unknown words to a single "unk" token.
-- Beam search is unused in BLEU calculation.
-- Model size. The setting of a model in this repo is one of "base model" in the paper, although you can modify some lines for using "big model".
-- This code follows some settings used in [tensor2tensor repository](https://github.com/tensorflow/tensor2tensor/tree/master/tensor2tensor/models), which includes a Transformer model. For example, positional encoding used in the repository seems to differ from one in the paper. This code follows the former one.
-
 See "[Attention Is All You Need](https://arxiv.org/abs/1706.03762)", Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, Illia Polosukhin, arxiv, 2017.
 
-This is modified and derived from my [convolutional seq2seq](https://github.com/soskek/convolutional_seq2seq) repo, which is also derived from Chainer's official [seq2seq example](https://github.com/chainer/chainer/tree/seq2seq-europal/examples/seq2seq).
+This repository is partly derived from my [convolutional seq2seq](https://github.com/soskek/convolutional_seq2seq) repo, which is also derived from Chainer's official [seq2seq example](https://github.com/chainer/chainer/tree/seq2seq-europal/examples/seq2seq).
 
 ## Requirement
 
 - Python 3.6.0+
-- [Chainer](https://github.com/chainer/chainer/) 2.0.0+ (this version is strictly required)
+- [Chainer](https://github.com/chainer/chainer/) 2.0.0+
 - [numpy](https://github.com/numpy/numpy) 1.12.1+
 - [cupy](https://github.com/cupy/cupy) 1.0.0+ (if using gpu)
+- nltk
+- progressbar
+- (You can install all through `pip`)
 - and their dependencies
 
 ## Prepare Dataset
@@ -51,3 +47,14 @@ Some of them is as follows:
 - `--target-vocab`: max size of vocabulary set of target language
 
 Please see the others by `python train.py -h`.
+
+
+## Note
+
+This repository does not aim for complete validation of results in the paper, so I have not eagerly confirmed validity of performance. But, I expect my implementation is almost compatible with a model described in the paper. Some differences where I am aware is as follows:  
+- Optimization/training strategy. Detailed information about batchsize, parameter initialization, etc. is unclear in the paper. Additionally, the learning rate proposed in the paper may work only with a large batchsize (e.g. 4000) for deep layer nets. I modified it by multiplying 0.5, though there is room for improvement. I also changed `relu` into `leaky relu` in feedforward net layers for easy gradient propagation.
+- Vocabulary set, dataset, preprocessing and evaluation. This repo uses a common word-based tokenization, although the paper uses byte-pair encoding. Size of token set also differs. Evaluation (validation) is little unfair and incompatible with one in the paper, e.g., even validation set replaces unknown words to a single "unk" token.
+- Beam search is unused in BLEU calculation.
+- Model size. The setting of a model in this repo is one of "base model" in the paper, although you can modify some lines for using "big model".
+- This code follows some settings used in [tensor2tensor repository](https://github.com/tensorflow/tensor2tensor/tree/master/tensor2tensor/models), which includes a Transformer model. For example, positional encoding used in the repository seems to differ from one in the paper. This code follows the former one.
+

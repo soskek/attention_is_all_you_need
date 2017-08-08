@@ -1,9 +1,7 @@
 from __future__ import unicode_literals
 
 import collections
-import gzip
 import io
-import os
 import re
 
 import numpy

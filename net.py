@@ -8,7 +8,7 @@ import chainer.functions as F
 import chainer.links as L
 from chainer import reporter
 
-from seq2seq import source_pad_concat_convert
+from train import source_pad_concat_convert
 
 # linear_init = chainer.initializers.GlorotNormal()
 linear_init = chainer.initializers.LeCunUniform()

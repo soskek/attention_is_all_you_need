@@ -15,7 +15,7 @@ from chainer import reporter
 from chainer import training
 from chainer.training import extensions
 
-import europal
+import preprocess
 import net
 
 from subfuncs import VaswaniRule
@@ -173,12 +173,12 @@ def main():
     # Check file
     en_path = os.path.join(args.input, args.source)
     source_vocab = ['<eos>', '<unk>', '<bos>'] + \
-        europal.count_words(en_path, args.source_vocab)
-    source_data = europal.make_dataset(en_path, source_vocab)
+        preprocess.count_words(en_path, args.source_vocab)
+    source_data = preprocess.make_dataset(en_path, source_vocab)
     fr_path = os.path.join(args.input, args.target)
     target_vocab = ['<eos>', '<unk>', '<bos>'] + \
-        europal.count_words(fr_path, args.target_vocab)
-    target_data = europal.make_dataset(fr_path, target_vocab)
+        preprocess.count_words(fr_path, args.target_vocab)
+    target_data = preprocess.make_dataset(fr_path, target_vocab)
     assert len(source_data) == len(target_data)
     print('Original training data size: %d' % len(source_data))
     train_data = [(s, t)
@@ -187,9 +187,9 @@ def main():
     print('Filtered training data size: %d' % len(train_data))
 
     en_path = os.path.join(args.input, args.source_valid)
-    source_data = europal.make_dataset(en_path, source_vocab)
+    source_data = preprocess.make_dataset(en_path, source_vocab)
     fr_path = os.path.join(args.input, args.target_valid)
-    target_data = europal.make_dataset(fr_path, target_vocab)
+    target_data = preprocess.make_dataset(fr_path, target_vocab)
     assert len(source_data) == len(target_data)
     test_data = [(s, t) for s, t in six.moves.zip(source_data, target_data)
                  if 0 < len(s) and 0 < len(t)]
@@ -288,7 +288,7 @@ def main():
         trigger=record_trigger)
 
     def translate_one(source, target):
-        words = europal.split_sentence(source)
+        words = preprocess.split_sentence(source)
         print('# source : ' + ' '.join(words))
         x = model.xp.array(
             [source_ids.get(w, 1) for w in words], 'i')
