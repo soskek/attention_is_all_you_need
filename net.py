@@ -179,11 +179,6 @@ class MultiHeadAttention(chainer.Chain):
         return C
 
 
-# Section 3.3 says the inner-layer has dimension 2048.
-# But, Table 4 says d_{ff} = 1024 (for "base model").
-# d_{ff}'s denotation is unclear, but it seems to denote the same one.
-
-
 class FeedForwardLayer(chainer.Chain):
     def __init__(self, n_units):
         super(FeedForwardLayer, self).__init__()

@@ -271,8 +271,9 @@ def main():
         trainer.extend(
             # VaswaniRule('alpha', d=args.unit, warmup_steps=4000, scale=1.),
             # VaswaniRule('alpha', d=args.unit, warmup_steps=32000, scale=1.),
-            VaswaniRule('alpha', d=args.unit, warmup_steps=4000, scale=0.5),
+            # VaswaniRule('alpha', d=args.unit, warmup_steps=4000, scale=0.5),
             # VaswaniRule('alpha', d=args.unit, warmup_steps=16000, scale=1.),
+            VaswaniRule('alpha', d=args.unit, warmup_steps=64000, scale=1.),
             trigger=(1, 'iteration'))
     observe_alpha = extensions.observe_value(
         'alpha',
